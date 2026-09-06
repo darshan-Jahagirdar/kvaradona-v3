@@ -1,0 +1,13 @@
+# Local credentials, including environment-specific files and editor backups.
+.env*
+!.env.example
+node_modules/
+.next/
+.local/
+coverage/
+test-results/
+playwright-report/
+*.tsbuildinfo
+.DS_Store
+supabase/.temp/
+.vercel

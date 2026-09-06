@@ -1,0 +1,45 @@
+import { z } from 'zod';
+export const Evidence = z.object({
+  id: z.string().uuid(), url: z.string().url(), finalUrl: z.string().url(), title: z.string(),
+  text: z.string().max(24000), contentHash: z.string(), retrievedAt: z.string().datetime(),
+  publishedAt: z.string().nullable(), source: z.string(), origin: z.enum(['original','provider_reported']),
+  status: z.enum(['current','closed','unknown']), accountHost: z.string().nullable(),
+});
+export const Claim = z.object({ id: z.string(), text: z.string(), kind: z.enum(['fact','inference','unknown']),
+  evidenceId: z.string().uuid(), quote: z.string(), material: z.boolean() });
+export const Research = z.object({
+  company: z.string(), accountHost: z.string(), identityBasis: z.string(), service: z.string(),
+  demand: z.enum(['external_demand','initiative','plausible','weak']),
+  whyNow: z.string(), offer: z.string(), buyerRole: z.string(),
+  claims: z.array(Claim).max(8), contrary: z.array(z.string()).max(5), uncertainties: z.array(z.string()).max(8),
+  decision: z.enum(['priority','exploration','watch','disqualified']), reason: z.string(),
+  watchTrigger: z.string().nullable(), specialist: z.enum(['crm','cro','aeo','none']), specialistReason: z.string(),
+  followUp: z.object({ query: z.string(), question: z.string(), decisionImpact: z.string() }).nullable(),
+});
+export const ClaimReview = z.object({ claimId: z.string(), verdict: z.enum(['supported','inference','contradicted','unverifiable']), evidenceIds: z.array(z.string().uuid()), repair: z.string() });
+export const Review = z.object({ verdicts: z.array(ClaimReview), acceptable: z.boolean(), issues: z.array(z.string()), inputHash: z.string() });
+export const Draft = z.object({ subject: z.string().max(200), body: z.string().max(6000), recipient: z.string().email().nullable(), sender: z.string().email().nullable(), claimIds: z.array(z.string()) });
+export const Contact = z.object({ name: z.string().nullable(), role: z.string(), email: z.string().email().nullable(),
+  emailStatus: z.enum(['provider_verified','catch_all','invalid','unknown']), employmentEvidence: z.string().nullable(),
+  source: z.string(), observedAt: z.string().datetime(), state: z.enum(['resolved','contact_pending','relationship_handoff']), reason: z.string() });
+export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),language:z.string(),discoveredAt:z.string().datetime()});
+export const Packet = z.object({
+  candidate: Candidate.optional(),
+  evidence: z.array(Evidence), research: Research.optional(), packetReview: Review.optional(), draftReview: Review.optional(),
+  contact: Contact.optional(), draft: Draft.optional(), state: z.string(),
+  relationship: z.enum(['unknown','clear','handoff','suppressed']).default('unknown'),
+  notes: z.array(z.string()).default([]), specialistFindings: z.array(z.object({ profile: z.enum(['crm','cro','aeo']), metric: z.string(), observation: z.string(), hypothesis: z.string() })).default([]),
+  mode: z.enum(['live','fixture']),
+});
+export const Job = z.object({
+  id: z.string().uuid(), organization_id: z.string().uuid(), campaign_id: z.string().uuid(), opportunity_id: z.string().uuid().nullable(),
+  stage: z.string(), business_key: z.string(), input_hash: z.string(), input_version: z.number().int(), schema_version: z.string(), prompt_version: z.string(),
+  attempt_token: z.string().uuid(), attempts: z.number(), payload: z.unknown(),
+});
+export type Packet = z.infer<typeof Packet>;
+export type Evidence = z.infer<typeof Evidence>;
+export type Research = z.infer<typeof Research>;
+export type Review = z.infer<typeof Review>;
+export type Draft = z.infer<typeof Draft>;
+export type Contact = z.infer<typeof Contact>;
+export type Job = z.infer<typeof Job>;

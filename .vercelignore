@@ -1,0 +1,13 @@
+.env*
+.local/
+.git/
+node_modules/
+.next/
+supabase/
+tests/
+scripts/
+worker/
+*.md
+*.pdf
+*.svg
+*.mmd
