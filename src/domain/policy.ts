@@ -9,7 +9,28 @@ export function eventKey(url: string) {
   for (const k of [...u.searchParams.keys()]) if (/^(utm_|ref$|source$)/i.test(k)) u.searchParams.delete(k);
   u.searchParams.sort(); return hash(u.toString());
 }
+export function discoveryPriority(candidate:{url:string;title:string;description:string}){
+ const u=new URL(candidate.url),text=candidate.title+' '+candidate.description;
+ const hostedJob=/(^|\.)(lever\.co|greenhouse\.io|ashbyhq\.com)$/.test(u.hostname)&&u.pathname.split('/').filter(Boolean).length>=2;
+ return (hostedJob?20:0)+(/\bHubSpot\b/i.test(text)?5:0)+(/revenue operations|lead routing|implementation|migration/i.test(text)?5:0)-(/\b(template|guide|how to)\b|all openings|\bJobs$/i.test(candidate.title)?40:0);
+}
 const normalized = (s: string) => s.replace(/\s+/g, ' ').trim();
+/** Repair formatting only when every quoted fragment occurs in order in the recorded source. */
+export function sourceQuote(quote:string,text:string):string|null{
+ const source=normalized(text),q=normalized(quote);if(!q)return null;if(source.includes(q))return q;
+ const fragments=[...q.matchAll(/[“"]([^”"]+)[”"]/g)].map(m=>m[1]);
+ const remainder=q.replace(/[“"]([^”"]+)[”"]/g,'').replace(/\band\b/g,'').replace(/[\s.,;]/g,'');
+ if(!fragments.length||remainder)return null;let start=-1,end=0;
+ for(const fragment of fragments){const i=source.indexOf(fragment,end);if(i<0)return null;if(start<0)start=i;end=i+fragment.length;}
+ return end-start<=1200?source.slice(start,end):null;
+}
+export function repairCitations(research:Research,packet:Packet):Research{
+ return {...research,claims:research.claims.map(c=>{
+  if(!c.quote.trim())return c;const original=packet.evidence.find(e=>e.id===c.evidenceId);if(!original)return c;
+  const sources=packet.evidence.filter(e=>e.id===original.id||(e.url===original.url&&e.accountHost===research.accountHost)).sort((a,b)=>Number(Boolean(b.accountHost))-Number(Boolean(a.accountHost))||b.retrievedAt.localeCompare(a.retrievedAt));
+  for(const e of sources){const quote=sourceQuote(c.quote,e.text);if(quote)return {...c,quote,evidenceId:e.id};}return c;
+ })};
+}
 export function validateResearch(research: Research, packet: Packet): string[] {
   const errors: string[] = [];
   if (!research.claims.length) errors.push('No attributable conversation fact');
@@ -17,7 +38,7 @@ export function validateResearch(research: Research, packet: Packet): string[] {
   for (const c of research.claims) {
     if(ids.has(c.id)) errors.push(`Duplicate claim:${c.id}`); ids.add(c.id);
     const e = packet.evidence.find(x => x.id === c.evidenceId);
-    if (!e || !c.quote.trim() || !normalized(e.text).includes(normalized(c.quote))) errors.push(`Unsupported quotation:${c.id}`);
+    if (!e || (c.kind==='fact'&&!c.quote.trim()) || (c.quote.trim()&&!normalized(e.text).includes(normalized(c.quote)))) errors.push(`Unsupported quotation:${c.id}`);
     if (c.kind === 'fact' && !e?.accountHost) errors.push(`Unresolved source attribution:${c.id}`);
   }
   if (!packet.evidence.some(e => e.accountHost === research.accountHost)) errors.push('Unverified company identity');

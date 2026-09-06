@@ -23,7 +23,7 @@ Initial SQL enforces a shared $1 OpenAI/Brave envelope, provider ceilings, a $0.
 
 The explicit local pilot command is `node --import tsx scripts/start-pilot.ts --authorized-one-dollar`. It is only for the already-authorized initial verification budget; it does not prove an account balance or buy credits. It enables a one-hour probe window for OpenAI/Brave and queues one discovery run. Other providers remain disabled until their free quotas and endpoints are verified. No schedule is enabled by the pilot.
 
-Evidence, drafts, review actions and failures persist in Supabase. Edits create a new version and require fresh checking. Contact-pending items are reviewable but cannot be approved for sending. The app never sends mail. Research questions are saved for review; automatic follow-up scheduling is still unfinished.
+Evidence, drafts, review actions and failures persist in Supabase. Edits create a new version and require fresh checking. Contact-pending items are reviewable but cannot be approved for sending. The app never sends mail. Research questions atomically queue one job against the next opportunity version; paused campaigns remain paused. Provider failures retain their budget reservations. Future failures also write a secret-safe diagnostic journal to ignored `.local/provider-failures.jsonl`; this does not settle unknown charges.
 
 Browser probes reuse installed Google Chrome on macOS. On another platform, install the matching Playwright Chromium before running specialist capture.
 

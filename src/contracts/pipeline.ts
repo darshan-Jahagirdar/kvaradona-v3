@@ -25,6 +25,7 @@ export const Contact = z.object({ name: z.string().nullable(), role: z.string(),
 export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),language:z.string(),discoveredAt:z.string().datetime()});
 export const Packet = z.object({
   candidate: Candidate.optional(),
+  researchRequest:z.object({question:z.string().max(3000),requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
   evidence: z.array(Evidence), research: Research.optional(), packetReview: Review.optional(), draftReview: Review.optional(),
   contact: Contact.optional(), draft: Draft.optional(), state: z.string(),
   relationship: z.enum(['unknown','clear','handoff','suppressed']).default('unknown'),

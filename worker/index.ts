@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import {appendFile,mkdir} from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 import { hostedStore,serviceClient } from '../src/persistence/client';
 import { Job } from '../src/contracts/pipeline';
@@ -17,7 +18,7 @@ do{
  try{
   await heartbeat('running');await store.rpc('tick_schedules',{});
   const raw=await store.rpc('claim_job',{p_worker:workerId});if(!raw){if(once||process.argv.includes('--drain'))break;await delay(5000);continue;}
-  const job=Job.parse(raw),operations=new OperationGateway(store,job);
+  const job=Job.parse(raw),operations=new OperationGateway(store,job,async entry=>{await mkdir('.local',{recursive:true});await appendFile('.local/provider-failures.jsonl',JSON.stringify(entry)+'\n',{mode:0o600});});
   console.log(JSON.stringify({job:job.id,stage:job.stage,status:'started'}));
   const lease=setInterval(()=>{void store.rpc('renew_job',{p_job:job.id,p_token:job.attempt_token}).catch(()=>{stop=true;});},20000);
   try{

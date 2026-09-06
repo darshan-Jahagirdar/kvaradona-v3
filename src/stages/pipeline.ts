@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { Packet,Research,Review,Draft,Candidate,type Job,type Evidence,type Contact } from '../contracts/pipeline';
-import { hash,eventKey,validateResearch,reviewProblems,contactPending,campaignProfile,hostOf } from '../domain/policy';
+import { hash,eventKey,validateResearch,reviewProblems,contactPending,campaignProfile,hostOf,discoveryPriority,repairCitations } from '../domain/policy';
 import type { AI } from '../ai/gateway';
 import type { Store } from '../persistence/client';
 import { captureWebsite,findings } from '../capture/specialists';
@@ -19,20 +19,23 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   const config=z.object({groupIndex:z.number().int().min(0),groups:z.array(z.object({query:z.string(),country:z.string(),language:z.string()}))}).parse(job.payload);
   const group=config.groups[config.groupIndex%config.groups.length];if(!group)throw new Error('search_group_missing');
   const candidates=await tools.search('discovery',group.query,group.country,group.language);
-  const seen=new Set<string>();const deduped=candidates.filter(c=>{if(seen.has(c.eventKey))return false;seen.add(c.eventKey);return true;});
+  const seen=new Set<string>();const deduped=candidates.filter(c=>{if(seen.has(c.eventKey))return false;seen.add(c.eventKey);return true;}).sort((a,b)=>discoveryPriority(b)-discoveryPriority(a));
   const report={mode:process.env.KVARA_FIXTURE==='1'?'fixture':'live',group,candidates:deduped,decision:'bounded_discovery',reason:'Research one original-source candidate first; keep remaining candidates visible.'};
   if(await store.rpc('ingest_discovery',{p_job:job.id,p_token:job.attempt_token,p_candidates:deduped.slice(0,4),p_report:report})!==true)throw new Error('ownership_lost');return;
  }
  const p=Packet.parse(job.payload);let nextStage:string|null=null;
  if(job.stage==='S04'){
   if(!p.candidate)throw new Error('candidate_missing');
+  if(discoveryPriority(p.candidate)<0){p.state='source_pending';p.notes.push('This discovery points to a guide or general careers index. A specific attributable source is needed before paid research; company fit remains unknown.');
+   if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw new Error('ownership_lost');return;
+  }
   p.evidence=[await tools.fetchEvidence(p.candidate.url)];p.state='evidence_collected';nextStage='S06';
  }else if(job.stage==='S06'){
-  if(p.evidence.length>0 && p.evidence.every(e=>/\b(template|guide|how to)\b/i.test(e.title))){
+  if(!p.researchRequest&&p.evidence.length>0 && p.evidence.every(e=>/\b(template|guide|how to)\b/i.test(e.title))){
    p.state='weak_context';p.notes.push('Original source is educational/template content, without an attributable current buying situation. Company potential is unknown; no model or contact credit spent.');
    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw new Error('ownership_lost');return;
   }
-  const researchInput={...context(p),offer:campaignProfile.offer,proof:[],instruction:'Use only original-source identity. A publication host is not necessarily the buyer. If identity cannot be attributed, keep it unresolved and request research. Propose at most one decision-changing follow-up query, or null. Keep excerpts short and verbatim. Include an attributable factual conversation anchor and a tentative useful offer.'};
+  const researchInput={...context(p),reviewQuestion:p.researchRequest?.question??null,offer:campaignProfile.offer,proof:[],instruction:'Use only original-source identity. A publication host is not necessarily the buyer. If identity cannot be attributed, keep it unresolved and request research. Propose at most one decision-changing follow-up query, or null. Keep excerpts short and verbatim. Include an attributable factual conversation anchor and a tentative useful offer.'};
   p.research=await tools.ai.generate('A2','research',Research,common,researchInput);
   if(p.research.followUp){
    const q=p.research.followUp;const results=await tools.search('followup',q.query,p.candidate?.country,p.candidate?.language);
@@ -40,8 +43,15 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
    if(candidate&&p.evidence.length<6){try{p.evidence.push(await tools.fetchEvidence(candidate.url));}catch{p.notes.push('Follow-up original source was unavailable.');}}
    p.research=await tools.ai.generate('A2','research_final',Research,common,{...researchInput,...context(p),prior:p.research,instruction:'Finalize using available evidence. No further tool cycle is allowed: set followUp to null.'});
   }
+  p.research=repairCitations(p.research,p);
   const errors=validateResearch(p.research,p);p.notes.push(...errors);
   if(errors.length){p.state='evidence_exception';}else if(p.research.decision==='disqualified'||p.research.decision==='watch'){p.state=p.research.decision;}else{p.state='researched';nextStage='S08';}
+ }else if(job.stage==='S07'){
+  if(!p.research||!p.candidate)throw new Error('research_missing');
+  // A parser/citation recovery reuses saved AI work. Prior source records and failed stage output stay intact.
+  p.evidence.push(await tools.fetchEvidence(p.candidate.url));p.research=repairCitations(p.research,p);
+  const errors=validateResearch(p.research,p);p.notes.push('Rechecked source attribution and exact excerpts using saved research; no repeated A2 call.',...errors);
+  if(errors.length)p.state='evidence_exception';else if(['watch','disqualified'].includes(p.research.decision))p.state=p.research.decision;else{p.state='researched';nextStage='S08';}
  }else if(job.stage==='S08'){
   if(!p.research)throw new Error('research_missing');
   const profile=p.research.specialist;

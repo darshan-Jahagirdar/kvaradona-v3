@@ -40,9 +40,34 @@ export async function fetchEvidence(input:string):Promise<Evidence>{
  if(robots.status===200&&!robotsAllows(robots.text,u.pathname))throw new Error('robots_disallowed');
  if(robots.status>=500||robots.status===429)throw new Error('robots_unavailable');
  const r=await safeRead(input);if(r.status!==200)throw new Error(`source_http_${r.status}`);if(!/html|text\/plain/.test(r.contentType))throw new Error('source_format_not_supported');
- const $=load(r.text);$('script,style,noscript,nav,footer,header').remove();
- const root=$('main').length?$('main'):$('body');const text=root.text().replace(/\s+/g,' ').trim().slice(0,18000);
+ return extractEvidence(input,r.url,r.text);
+}
+const boardHost=(host:string)=>/(^|\.)(ashbyhq\.com|greenhouse\.io|lever\.co|jobleads\.com|bebee\.com|revopsroles\.com|linkedin\.com|indeed\.com)$/.test(host);
+const firstPartyATS=(host:string)=>/(^|\.)(ashbyhq\.com|greenhouse\.io|lever\.co)$/.test(host);
+/** Extract structured employer attribution before removing scripts; the publishing board is never the buyer. */
+export function extractEvidence(input:string,finalUrl:string,html:string,now=new Date()):Evidence{
+ const $=load(html),publisher=hostOf(finalUrl);let job:Record<string,unknown>|undefined;
+ function inspect(value:unknown){
+  if(Array.isArray(value)){for(const item of value)inspect(item);return;}
+  if(!value||typeof value!=='object')return;const v=value as Record<string,unknown>;
+  if(v['@type']==='JobPosting'||(Array.isArray(v['@type'])&&v['@type'].includes('JobPosting')))job??=v;
+  if(v['@graph'])inspect(v['@graph']);
+ }
+ $('script[type="application/ld+json"]').each((_i,e)=>{try{inspect(JSON.parse($(e).text()));}catch{/* Malformed metadata cannot establish identity. */}});
+ const organization=job?.hiringOrganization&&typeof job.hiringOrganization==='object'?job.hiringOrganization as Record<string,unknown>:undefined;
+ const organizationName=typeof organization?.name==='string'?organization.name:null;
+ let organizationUrl=typeof organization?.sameAs==='string'?organization.sameAs:typeof organization?.url==='string'?organization.url:null;
+ if(!organizationUrl&&organizationName&&firstPartyATS(publisher)){
+  const links=$('a[href]').toArray().filter(a=>{const label=$(a).text().trim().toLowerCase();return label.startsWith(organizationName.toLowerCase())&&/home\s?page|website/.test(label);}).map(a=>$(a).attr('href')!).filter(Boolean);
+  if(new Set(links).size===1)organizationUrl=new URL(links[0],finalUrl).href;
+ }
+ let accountHost:string|null=boardHost(publisher)?null:publisher;
+ if(firstPartyATS(publisher)&&organizationName&&organizationUrl){try{const u=new URL(organizationUrl);if(['http:','https:'].includes(u.protocol)&&!u.username&&!u.password&&!boardHost(hostOf(u.href)))accountHost=hostOf(u.href);}catch{/* Identity stays unresolved. */}}
+ const metadata=job?[typeof job.title==='string'?job.title:'',organizationName?`Hiring organization: ${organizationName}.`:'',organizationUrl?`Organization URL: ${organizationUrl}`:'',typeof job.datePosted==='string'?`Date posted: ${job.datePosted}`:'',typeof job.description==='string'?load(job.description).text():''].filter(Boolean).join('\n'):'';
+ const published=typeof job?.datePosted==='string'?job.datePosted:$('meta[property="article:published_time"]').attr('content')??$('time[datetime]').first().attr('datetime')??null;
+ const expiry=typeof job?.validThrough==='string'?Date.parse(job.validThrough):NaN;
+ $('script,style,noscript,nav,footer,header').remove();
+ const root=$('main').length?$('main'):$('body');const text=[metadata,root.text()].filter(Boolean).join('\n').replace(/\s+/g,' ').trim().slice(0,18000);
  if(text.length<120)throw new Error('source_text_insufficient');
- const published=$('meta[property="article:published_time"]').attr('content')??$('time[datetime]').first().attr('datetime')??null;
- return {id:randomUUID(),url:input,finalUrl:r.url,title:$('title').text().trim(),text,contentHash:hash(text),retrievedAt:new Date().toISOString(),publishedAt:published,source:'original_web',origin:'original',status:'unknown',accountHost:hostOf(r.url)};
+ return {id:randomUUID(),url:input,finalUrl,title:$('title').text().trim()||(typeof job?.title==='string'?job.title:''),text,contentHash:hash(text),retrievedAt:now.toISOString(),publishedAt:published,source:job?'job_posting_web':'original_web',origin:boardHost(publisher)&&!firstPartyATS(publisher)?'provider_reported':'original',status:Number.isFinite(expiry)&&expiry<now.getTime()?'closed':'unknown',accountHost};
 }
