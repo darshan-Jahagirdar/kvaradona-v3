@@ -1,6 +1,7 @@
 import type {Packet,Evidence,Claim} from '../contracts/pipeline';
 import type {WebsiteCapture,WebsiteAnalysis} from '../contracts/website';
 import {hash,hostOf} from './policy';
+import {selectWebsiteFacts} from '../capture/website-facts';
 export function websiteInputHash(p:Packet){return hash({research:p.research,request:p.websiteRequest,evidence:p.evidence.filter(e=>e.source!=='website_capture').map(e=>({id:e.id,version:hash(e)}))});}
 export function captureEvidence(capture:WebsiteCapture):Evidence{
  const text=capture.facts.map(f=>`${f.id}: ${f.text}`).join('\n');
@@ -8,7 +9,11 @@ export function captureEvidence(capture:WebsiteCapture):Evidence{
 }
 export function websiteContext(p:Packet){
  const s=p.websiteSupplement;if(!s)throw Error('website_capture_required');
- return {profiles:s.profiles,question:s.question,url:s.capture.finalUrl,observedAt:s.capture.observedAt,renderStable:s.capture.renderStable,complete:s.capture.complete,facts:s.capture.facts,limitations:s.capture.limitations};
+ const selected=selectWebsiteFacts(s.capture.facts,9000).facts;
+ const cited=new Set(s.analysis?.findings.flatMap(f=>f.observationIds)??[]);
+ const facts=[...selected,...s.capture.facts.filter(f=>cited.has(f.id)&&!selected.some(x=>x.id===f.id))];
+ const omitted=s.capture.facts.length-facts.length;
+ return {profiles:s.profiles,question:s.question,url:s.capture.finalUrl,observedAt:s.capture.observedAt,renderStable:s.capture.renderStable,complete:s.capture.complete,facts,limitations:[...s.capture.limitations,...(omitted?[`${omitted} saved observations are outside this model sample. Missing observations do not establish absent content or controls.`]:[])]};
 }
 export function websiteReviewTarget(p:Packet){return JSON.stringify({inputHash:p.websiteSupplement?.inputHash,capture:p.websiteSupplement?.capture,analysis:p.websiteSupplement?.analysis});}
 export function normalizeWebsiteScope(analysis:WebsiteAnalysis){

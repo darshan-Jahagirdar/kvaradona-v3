@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {Packet} from '../src/contracts/pipeline';
 import {WebsiteCapture,type WebsiteAnalysis} from '../src/contracts/website';
 import {websiteSpecialistStep,type WebsiteTools} from '../src/stages/website-specialist';
-import {captureEvidence,websiteInputHash,websiteReviewProblems,websiteDraftClaims} from '../src/domain/website-specialist';
+import {captureEvidence,websiteInputHash,websiteReviewProblems,websiteDraftClaims,websiteContext} from '../src/domain/website-specialist';
 import {hash} from '../src/domain/policy';
 function fixture(){
  const capture=WebsiteCapture.parse({id:randomUUID(),url:'https://fixture.invalid/',finalUrl:'https://fixture.invalid/',accountHost:'fixture.invalid',observedAt:new Date().toISOString(),version:'web-1',mode:'fixture',complete:true,facts:[{id:'mobile_field_0',category:'form',viewport:'mobile',selector:'#email',text:'An email input has no detected accessible name.'},{id:'page_title',category:'content',viewport:'page',selector:null,text:'Make things better.'}],screenshots:[],limitations:['Synthetic evidence.'],requests:0,bytes:0,elapsedMs:0,renderStable:true});
@@ -42,4 +42,17 @@ it('binds reviews to exact measurements and finding coverage rather than an acce
  p.websiteSupplement!.review!.verdicts[0].observationIds=['page_title'];expect(websiteReviewProblems(p)).toContain('Website review coverage:web_form');
  p.websiteSupplement!.capture.facts[0].text='Fabricated metric';expect(websiteReviewProblems(p)).toContain('Website measurements do not match stored evidence');
  delete p.research;expect(websiteReviewProblems(p)).toContain('Website attribution mismatch');
+});
+
+it('bounds model context without deleting capture facts and retains every exact finding citation for review',()=>{
+ const {p,capture,analysis}=fixture();
+ capture.facts.push(...Array.from({length:30},(_,i)=>({id:`long_${i}`,category:'content' as const,viewport:i%2?'mobile' as const:'desktop' as const,selector:null,text:'Original observed passage. '.repeat(40)})));
+ p.websiteSupplement={inputHash:websiteInputHash(p),profiles:['cro','aeo'],question:'Fixture',capture};
+ const before=JSON.stringify(capture),sample=websiteContext(p);
+ expect(Buffer.byteLength(JSON.stringify(sample.facts))).toBeLessThanOrEqual(9000);
+ expect(sample.facts.some(f=>f.viewport==='desktop')).toBe(true);expect(sample.facts.some(f=>f.viewport==='mobile')).toBe(true);
+ const omitted=capture.facts.find(f=>!sample.facts.some(x=>x.id===f.id))!;
+ analysis.findings[1].observationIds=[omitted.id];p.websiteSupplement.analysis=analysis;
+ expect(websiteContext(p).facts.find(f=>f.id===omitted.id)).toEqual(omitted);
+ expect(JSON.stringify(capture)).toBe(before);
 });
