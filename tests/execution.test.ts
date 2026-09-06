@@ -57,6 +57,7 @@ it('preserves edits, invalidates old worker versions, rejects duplicate request 
  await db.exec('reset role');expect(await store.rpc('renew_job',{p_job:job.id,p_token:job.attempt_token})).toBe(false);
 });
 it('coalesces missed schedules and remains idle when a campaign is paused',async()=>{
+ await db.query('update public.campaigns set profile=$1 where id=$2',[JSON.stringify({groupIndex:0,groups:[{country:'US',language:'en',query:'Synthetic query'}]}),campaign]);
  await db.query(`insert into public.schedules(organization_id,campaign_id,next_due,interval_seconds,enabled) values($1,$2,now()-interval '3 days',300,true)`,[org,campaign]);
  expect(await store.rpc('tick_schedules',{})).toBe(1);expect(await store.rpc('tick_schedules',{})).toBe(0);
  expect((await db.query('select * from public.jobs')).rows).toHaveLength(1);

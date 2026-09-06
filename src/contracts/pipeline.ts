@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {WebsiteSupplement,WebsiteProfile} from './website';
+import {ProviderJob} from './discovery';
 export const Evidence = z.object({
   id: z.string().uuid(), url: z.string().url(), finalUrl: z.string().url(), title: z.string(),
   text: z.string().max(24000), contentHash: z.string(), retrievedAt: z.string().datetime(),
@@ -30,7 +31,7 @@ export const Contact = z.object({ name: z.string().nullable(), role: z.string(),
   candidates:z.array(z.object({providerId:z.string(),displayName:z.string(),role:z.string(),company:z.string(),refreshedAt:z.string().nullable(),emailAvailable:z.boolean(),reason:z.string()})).max(5).optional(),
   emailStatus: z.enum(['provider_verified','catch_all','invalid','unknown']), employmentEvidence: z.string().nullable(),
   source: z.string(), observedAt: z.string().datetime(), state: z.enum(['resolved','contact_pending','relationship_handoff']), reason: z.string() });
-export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),language:z.string(),discoveredAt:z.string().datetime()});
+export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),language:z.string(),discoveredAt:z.string().datetime(),providerRecord:ProviderJob.optional()});
 export const Packet = z.object({
   candidate: Candidate.optional(),
   draftReplacement:z.object({operationId:z.string().uuid(),model:z.literal('gpt-5.6-terra'),reason:z.string().min(20).max(1000),requestedAt:z.string()}).optional(),

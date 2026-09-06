@@ -1,8 +1,9 @@
 'use client';
 import { useState } from 'react';
 import {WebsiteReviewPanel} from './website-review';
+import {DiscoveryProvenance,type DiscoveryObservationSummary} from './discovery-provenance';
 import type { Packet } from '../src/contracts/pipeline';
-export function ReviewCard({id,revision,packet:p,crmChecked,websiteChecked}:{id:string;revision:number;packet:Packet;crmChecked:boolean;websiteChecked:boolean}) {
+export function ReviewCard({id,revision,packet:p,crmChecked,websiteChecked,discoveryObservations=[]}:{id:string;revision:number;packet:Packet;crmChecked:boolean;websiteChecked:boolean;discoveryObservations?:DiscoveryObservationSummary[]}) {
  const [subject,setSubject]=useState(p.draft?.subject??''),[body,setBody]=useState(p.draft?.body??''),[note,setNote]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false);
  const [requestAttempt,setRequestAttempt]=useState<{key:string;body:string}|null>(null);
  async function review(action:string){
@@ -14,6 +15,7 @@ export function ReviewCard({id,revision,packet:p,crmChecked,websiteChecked}:{id:
  return <article className="card"><div className="card-heading"><div><p className="eyebrow">{r?.service??'NEW DISCOVERY'} · {r?.decision??'RESEARCH PENDING'}</p><h2>{r?.company??p.candidate?.title??'Opportunity'}</h2><p className="muted">{r?.accountHost??p.candidate?.url}</p></div><span className={`badge ${p.mode==='fixture'?'fixture':''}`}>{p.mode==='fixture'?'Verification fixture · not a prospect':p.state.replaceAll('_',' ')}</span></div>
  <div className="card-grid"><section><h3>Why this company, why now</h3><p>{r?.whyNow??'Original evidence has not been researched yet.'}</p>{r&&<><h3>The useful offer</h3><p>{r.offer}</p><h3>Buyer & relationship</h3><p>{p.contact?.name??r.buyerRole} · {p.contact?.email??'Contact pending'}</p><p className="muted">{p.contact?.reason??'Contact resolution follows evidence review.'} Relationship history: {p.relationship}.</p></>}
  {Boolean(p.contact?.candidates?.length)&&<details><summary>Buyer candidates · {p.contact!.candidates!.length}</summary>{p.contact!.candidates!.map(c=><div key={c.providerId}><p><strong>{c.displayName}</strong> · {c.role} · {c.company}</p><p className="footnote">{c.reason} {c.refreshedAt?`Provider refreshed ${new Date(c.refreshedAt).toLocaleDateString()}.`:'Provider freshness unknown.'}</p></div>)}</details>}
+ <DiscoveryProvenance packet={p} observations={discoveryObservations}/>
  <h3>Evidence trail <span className="count">{p.evidence.length}</span></h3>{p.evidence.map(e=><details key={e.id}><summary>{e.title}</summary><a href={e.finalUrl} target="_blank" rel="noreferrer">View original source ↗</a><p className="footnote">Retrieved {new Date(e.retrievedAt).toLocaleDateString()} · {e.status} · {e.origin}</p><blockquote>{e.text.slice(0,3000)}</blockquote></details>)}
  {r?.claims.map(c=><p className="claim" key={c.id}><span>{c.kind}</span>{c.text}</p>)}
  <h3>Uncertainties & contrary evidence</h3><ul>{[...(r?.uncertainties??[]),...(r?.contrary??[])].map((n,i)=><li key={i}>{n}</li>)}</ul>

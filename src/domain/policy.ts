@@ -9,10 +9,11 @@ export function eventKey(url: string) {
   for (const k of [...u.searchParams.keys()]) if (/^(utm_|ref$|source$)/i.test(k)) u.searchParams.delete(k);
   u.searchParams.sort(); return hash(u.toString());
 }
-export function discoveryPriority(candidate:{url:string;title:string;description:string}){
- const u=new URL(candidate.url),text=candidate.title+' '+candidate.description;
+export function discoveryPriority(candidate:{url:string;title:string;description:string;providerRecord?:{description:string;finalUrl:string|null}}){
+ const u=new URL(candidate.url),text=candidate.title+' '+(candidate.providerRecord?.description??candidate.description);
  const hostedJob=/(^|\.)(lever\.co|greenhouse\.io|ashbyhq\.com)$/.test(u.hostname)&&u.pathname.split('/').filter(Boolean).length>=2;
- return (hostedJob?20:0)+(/\bHubSpot\b/i.test(text)?5:0)+(/revenue operations|lead routing|implementation|migration/i.test(text)?5:0)-(/\b(template|guide|how to)\b|all openings|\bJobs$/i.test(candidate.title)?40:0);
+ const reportedOriginal=candidate.providerRecord?.finalUrl===candidate.url;
+ return (hostedJob||reportedOriginal?20:0)+(/\bHubSpot\b/i.test(text)?5:0)+(/revenue operations|lead routing|implementation|migration/i.test(text)?5:0)-(/\b(template|guide|how to)\b|all openings|\bJobs$/i.test(candidate.title)?40:0);
 }
 const normalized = (s: string) => s.replace(/\s+/g, ' ').trim();
 /** Repair formatting only when every quoted fragment occurs in order in the recorded source. */

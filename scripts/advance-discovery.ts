@@ -10,6 +10,6 @@ if(jobError)throw new Error('job_read_failed');
 const attempted=new Set(jobs?.map(j=>j.opportunity_id));
 const candidate=rows?.filter(r=>!attempted.has(r.id)&&r.packet.candidate&&discoveryPriority(r.packet.candidate)>0).sort((a,b)=>discoveryPriority(b.packet.candidate)-discoveryPriority(a.packet.candidate))[0];
 if(!candidate){console.log('No unattempted candidate in the saved discovery pool.');process.exit(0);}
-const {error:insertError}=await c.from('jobs').upsert({organization_id:project.organizationId,campaign_id:candidate.campaign_id,opportunity_id:candidate.id,business_key:`${candidate.id}:S04:${candidate.revision}`,stage:'S04',input_hash:hash(candidate.packet),input_version:candidate.revision,schema_version:'1',prompt_version:'1',payload:candidate.packet},{onConflict:'organization_id,business_key',ignoreDuplicates:true});
+const {error:insertError}=await c.from('jobs').upsert({organization_id:project.organizationId,campaign_id:candidate.campaign_id,opportunity_id:candidate.id,business_key:`${candidate.id}:S04:${candidate.revision}`,stage:'S04',input_hash:hash(candidate.packet),input_version:candidate.revision,schema_version:'1',prompt_version:'8',payload:candidate.packet},{onConflict:'organization_id,business_key',ignoreDuplicates:true});
 if(insertError)throw new Error('enqueue_failed');
 console.log(JSON.stringify({opportunity:candidate.id,url:candidate.packet.candidate.url,action:'advance_one_saved_candidate'}));
