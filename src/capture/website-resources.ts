@@ -1,4 +1,5 @@
 import {safeRead} from './fetch';
+import {websiteLimits as limits} from './website-limits';
 
 type Response=Awaited<ReturnType<typeof safeRead>>;
 type Pending={url:string;kind:string;resolve:(value:Response)=>void;reject:(error:Error)=>void};
@@ -8,32 +9,32 @@ const priority=(kind:string)=>kind==='font'?1:kind==='image'?2:0;
 export function websiteResources(document:Response,robotsBytes:number,signal:AbortSignal){
  const cache=new Map<string,Promise<Response>>([[document.url,Promise.resolve(document)]]),queue:Pending[]=[];
  const skipped=new Set<string>(),optionalCounts={font:0,image:0};
- let active=0,reservedBytes=0,optionalAllowed=false;
+ let active=0,optionalActive=0,reservedBytes=0;
  const stats={requests:2,bytes:robotsBytes+document.bytes.length};
  function pump(){
   queue.sort((a,b)=>priority(a.kind)-priority(b.kind));
-  while(active<2&&queue.length){
-   if(!optionalAllowed&&priority(queue[0].kind)>0)return;
+  while(active<limits.concurrent&&queue.length){
+   if(priority(queue[0].kind)>0&&optionalActive>=limits.optionalConcurrent)return;
    const item=queue.shift()!;
    if(signal.aborted){item.reject(Error('capture_deadline'));continue;}
-   const remaining=10000000-stats.bytes-reservedBytes;
-   if(stats.requests>=50||remaining<=0){item.reject(Error('capture_request_limit'));continue;}
-   const optional=priority(item.kind)>0,allowance=Math.min(optional?250000:1000000,remaining);
-   stats.requests++;active++;reservedBytes+=allowance;
-   // Optional reads cannot occupy both slots for the full critical-resource timeout.
-   const readSignal=optional?AbortSignal.any([signal,AbortSignal.timeout(1500)]):signal;
-   void safeRead(item.url,allowance,readSignal).then(value=>{stats.bytes+=value.bytes.length;item.resolve(value);},item.reject).finally(()=>{active--;reservedBytes-=allowance;pump();});
+   const remaining=limits.bytes-stats.bytes-reservedBytes;
+   if(stats.requests>=limits.requests||remaining<=0){item.reject(Error('capture_request_limit'));continue;}
+   const optional=priority(item.kind)>0,allowance=Math.min(optional?limits.optionalBytes:limits.criticalBytes,remaining);
+   stats.requests++;active++;if(optional)optionalActive++;reservedBytes+=allowance;
+   // Optional reads cannot occupy the four slots reserved for critical dependencies.
+   const readSignal=optional?AbortSignal.any([signal,AbortSignal.timeout(limits.optionalMs)]):signal;
+   void safeRead(item.url,allowance,readSignal,optional?limits.optionalMs:30000).then(value=>{stats.bytes+=value.bytes.length;item.resolve(value);},item.reject).finally(()=>{active--;if(optional)optionalActive--;reservedBytes-=allowance;pump();});
   }
  }
  signal.addEventListener('abort',()=>{for(const item of queue.splice(0))item.reject(Error('capture_deadline'));},{once:true});
  return {
   stats,skipped,
-  releaseOptional(){optionalAllowed=true;pump();},
+  get pending(){return active+queue.length;},
   read(url:string,kind:string):Promise<Response>{
    const saved=cache.get(url);if(saved)return saved;
    if(signal.aborted)return Promise.reject(Error('capture_deadline'));
    if(kind==='image'||kind==='font'){
-    if(optionalCounts[kind]>=4){skipped.add(`${kind}:${url}`);return Promise.reject(Error('capture_optional_limit'));}
+    if(optionalCounts[kind]>=(kind==='image'?limits.images:limits.fonts)){skipped.add(`${kind}:${url}`);return Promise.reject(Error('capture_optional_limit'));}
     optionalCounts[kind]++;
    }
    const result=new Promise<Response>((resolve,reject)=>queue.push({url,kind,resolve,reject}));

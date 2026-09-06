@@ -12,14 +12,15 @@ export async function publicUrl(input:string){
  const url=new URL(input);if(!['https:','http:'].includes(url.protocol)||url.username||url.password||(url.port&&!['80','443'].includes(url.port)))throw new Error('unsafe_url');
  const addresses=await lookup(url.hostname,{all:true});if(!addresses.length||addresses.some(a=>!publicAddress(a.address)))throw new Error('unsafe_destination');return {url,addresses};
 }
-export async function safeRead(input:string,limit=1000000,signal?:AbortSignal){
+export async function safeRead(input:string,limit=1000000,signal?:AbortSignal,timeoutMs=12000){
+ if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>30000)throw Error('invalid_read_timeout');
  let current=input;
  for(let i=0;i<4;i++){
   const {url,addresses}=await publicUrl(current);const pinned=addresses[0];
   // Pin the validated address through connect; DNS rebinding cannot reach a private destination.
   const agent=new Agent({connect:{lookup:(_hostname,_options,callback)=>callback(null,[pinned])}});
   try{
-   const response=await request(url,{dispatcher:agent,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(12000)]):AbortSignal.timeout(12000),headers:{'user-agent':'KvaradonaResearch/0.1 (+evidence review)','accept':'text/html,text/plain,application/json;q=0.9'},headersTimeout:10000,bodyTimeout:10000});
+   const response=await request(url,{dispatcher:agent,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs),headers:{'user-agent':'KvaradonaResearch/0.1 (+evidence review)','accept':'*/*'},headersTimeout:Math.min(30000,timeoutMs),bodyTimeout:Math.min(30000,timeoutMs)});
    if(response.statusCode>=300&&response.statusCode<400){const location=response.headers.location;await response.body.dump();if(!location||Array.isArray(location))throw new Error('redirect_missing');current=new URL(location,url).toString();continue;}
    const chunks:Buffer[]=[];let size=0;for await(const chunk of response.body){const b=Buffer.from(chunk);size+=b.length;if(size>limit)throw new Error('document_size_limit');chunks.push(b);}
    return {url:url.toString(),status:response.statusCode,contentType:String(response.headers['content-type']??''),robotsHeader:String(response.headers['x-robots-tag']??''),text:Buffer.concat(chunks).toString('utf8'),bytes:Buffer.concat(chunks)};

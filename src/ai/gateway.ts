@@ -24,7 +24,7 @@ export class OpenAIGateway implements AI {
   const inputBound=Buffer.byteLength(JSON.stringify(request))+2048+descriptors.reduce((sum,i)=>sum+i.tokens,0);
   const max=usd((money(modelCost(model,inputBound,0))*5n+3n)/4n+money(modelCost(model,0,maxOutput)));
   const result=Result.parse(await this.operations.run(key,'openai',request,max,0,Result,async()=>{
-   const client=new OpenAI({apiKey:required('OPENAI_API_KEY'),maxRetries:0,timeout:55000});
+   const client=new OpenAI({apiKey:required('OPENAI_API_KEY'),maxRetries:0,timeout:images.length?180000:55000});
    const imageInput=images.length?[{role:'user' as const,content:[{type:'input_text' as const,text:content},...images.flatMap(i=>[{type:'input_text' as const,text:`Screenshot ${i.id}`},{type:'input_image' as const,image_url:`data:image/png;base64,${i.png.toString('base64')}`,detail:'high' as const}])]}]:content;
    const response=await client.responses.create({...params,input:imageInput});const usage=response.usage;
    let actual:string|null=null;
