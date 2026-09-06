@@ -3,14 +3,14 @@ import {hash,reviewProblems,validateResearch,sourceQuote} from './policy';
 import {websiteDraftClaims} from './website-specialist';
 
 export function crmInputHash(p:Packet){
- return hash({research:p.research,evidence:p.evidence.map(e=>({id:e.id,version:hash(e)}))});
+ return hash({research:p.research,evidence:p.evidence.filter(e=>e.source!=='website_capture').map(e=>({id:e.id,version:hash(e)}))});
 }
 export function crmContext(p:Packet){
  if(!p.research)throw Error('research_missing');
  const r=p.research;
  // Original dated source excerpts only; neither contact data nor an earlier draft is needed.
  const seen=new Set<string>();
- const evidence=p.evidence.filter(e=>e.origin==='original'&&e.accountHost===r.accountHost)
+ const evidence=p.evidence.filter(e=>e.source!=='website_capture'&&e.origin==='original'&&e.accountHost===r.accountHost)
   .sort((a,b)=>b.retrievedAt.localeCompare(a.retrievedAt)).filter(e=>{if(seen.has(e.finalUrl))return false;seen.add(e.finalUrl);return true;}).slice(0,2)
   .map(e=>{
    const excerpts=[e.text.slice(0,1800)];

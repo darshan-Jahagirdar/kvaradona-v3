@@ -1,8 +1,9 @@
 import type {Packet} from '../src/contracts/pipeline';
+import {displayDate} from '../src/domain/display-date';
 export function WebsiteReviewPanel({id,packet,checked}:{id:string;packet:Packet;checked:boolean}){
  const s=packet.websiteSupplement;if(!s)return null;
  return <section><h3>Website analysis · {s.profiles.map(p=>p.toUpperCase()).join(' / ')}</h3>
-  <p className="footnote">{s.capture.mode==='live'?'Live public-page capture':'Synthetic page fixture'} · {new Date(s.capture.observedAt).toLocaleString()} · Evidence review: {checked?'checked':'pending or repair needed'}</p>
+  <p className="footnote">{s.capture.mode==='live'?'Live public-page capture':'Synthetic page fixture'} · {displayDate(s.capture.observedAt,true)} · Evidence review: {checked?'checked':'pending or repair needed'}</p>
   {s.capture.mode==='fixture'&&<p className="footnote">Synthetic verification only. Analysis and review are mocked; no live model result or prospect qualification.</p>}
   <p>{s.question}</p><a href={s.capture.finalUrl} target="_blank" rel="noreferrer">Captured page ↗</a>
   {!s.capture.complete&&<p role="status">Capture incomplete. Missing content is not a verified site problem.</p>}

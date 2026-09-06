@@ -35,6 +35,7 @@ export const Candidate = z.object({url:z.string().url(),title:z.string(),descrip
 export const Packet = z.object({
   candidate: Candidate.optional(),
   draftReplacement:z.object({operationId:z.string().uuid(),model:z.literal('gpt-5.6-terra'),reason:z.string().min(20).max(1000),requestedAt:z.string()}).optional(),
+  draftCheckRequest:z.object({requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
   researchRequest:z.object({question:z.string().max(3000),requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
   evidence: z.array(Evidence), research: Research.optional(), packetReview: Review.optional(), draftReview: Review.optional(),
   crmSupplement:z.object({inputHash:z.string(),analysis:CrmAnalysis,review:Review.optional()}).optional(),

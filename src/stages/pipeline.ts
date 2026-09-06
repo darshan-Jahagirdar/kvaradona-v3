@@ -119,17 +119,22 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   }
  }else if(job.stage==='S11'){
   if(p.crmSupplement&&crmReviewProblems(p).length)throw Error('crm_review_required');
-  if(p.websiteSupplement&&websiteReviewProblems(p).length)throw Error('website_review_required');
+  // A separately requested exploratory website audit cannot block checking an existing CRM draft.
+  const unusedWebsiteAudit=p.draftCheckRequest&&p.websiteRequest?.verificationOnly&&p.draft&&!p.draft.claimIds.some(id=>id.startsWith('web_'));
+  if(p.websiteSupplement&&websiteReviewProblems(p).length&&!unusedWebsiteAudit)throw Error('website_review_required');
+  const reviewPacket=unusedWebsiteAudit?{...p,evidence:p.evidence.filter(e=>e.source!=='website_capture'),websiteSupplement:undefined}:p;
   if(!p.research||!p.packetReview?.acceptable)throw new Error('packet_review_required');
+  if(reviewProblems(p.packetReview,p.research,p,JSON.stringify(p.research)).length)throw Error('packet_review_stale');
+  if(p.draftCheckRequest&&!p.draft)throw Error('draft_required');
   const input={...context(p),research:draftResearch(p,true),recipient:p.contact?.email??null,sender:null,proof:[],instruction:'Write a short, useful email. No invented sender name, case studies or metrics. Use dated factual wording when current status is unknown; frame service need tentatively. One modest next step. recipient must equal the provided value (null means contact pending); sender null. cite claim IDs used.'};
   if(!p.draft)p.draft=await tools.ai.generate('A4','draft',Draft,common,input);
   if(p.draft.recipient!==(p.contact?.email??null)||p.draft.sender!==null||p.draft.claimIds.some(id=>!draftResearch(p,true).claims.some(c=>c.id===id)))throw new Error('invalid_draft_identity_or_claims');
   for(let attempt=0;attempt<2;attempt++){
    const target:string=JSON.stringify(p.draft);
-   p.draftReview=await tools.ai.generate('A5',`draft_review_${attempt}`,Review,common,{...draftReviewContext(p),research:draftResearch(p),draft:p.draft,inputHash:hash(target),instruction:'Review the exact draft, including claims newly introduced by its writer. Check all material research claims and all assertions in the message. Echo inputHash exactly. Do not approve invented pain, intent, timings, credentials, proof, measurement or contact identity. List repairs in issues and verdicts.'});
+   p.draftReview=await tools.ai.generate('A5',`draft_review_${attempt}`,Review,common,{...draftReviewContext(reviewPacket),research:draftResearch(p),draft:p.draft,inputHash:hash(target),instruction:'Review the exact draft, including claims newly introduced by its writer. Check all material research claims and all assertions in the message. Echo inputHash exactly. Do not approve invented pain, intent, timings, credentials, proof, measurement or contact identity. List repairs in issues and verdicts.'});
    const errors=reviewProblems(p.draftReview,draftResearch(p),p,target);
    if(!errors.length){p.state=p.contact?.state==='resolved'?'review_ready':'contact_pending';break;}
-   if(attempt===1){p.notes.push(...errors);p.state='draft_exception';break;}
+   if(attempt===1||p.draftCheckRequest){p.notes.push(...errors);p.state='draft_exception';break;}
    p.draft=await tools.ai.generate('A4','draft_repair',Draft,common,{...input,prior:p.draft,review:p.draftReview,instruction:'Repair the specific unsupported wording; preserve factual anchors. This is the single permitted repair.'});
    if(p.draft.recipient!==(p.contact?.email??null)||p.draft.sender!==null||p.draft.claimIds.some(id=>!draftResearch(p,true).claims.some(c=>c.id===id)))throw new Error('invalid_repaired_draft_identity_or_claims');
   }
