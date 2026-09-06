@@ -5,14 +5,14 @@ import { required } from '../config/env';
 import { modelCost,money,usd,PRICE_VERSION,type Model } from '../usage/money';
 import type { OperationGateway } from '../usage/operations';
 export const roleModels={A1:'gpt-5.6-luna',A2:'gpt-5.6-terra',A3:'gpt-5.6-terra',A4:'gpt-5.6-luna',A5:'gpt-5.6-terra',A6:'gpt-5.6-luna'} as const;
-export interface AI { generate<T>(role:keyof typeof roleModels,key:string,schema:z.ZodType<T>,instructions:string,input:unknown):Promise<T>; }
+export interface AI { generate<T>(role:keyof typeof roleModels,key:string,schema:z.ZodType<T>,instructions:string,input:unknown,limits?:{maxOutputTokens:number}):Promise<T>; }
 const Result=z.object({status:z.string().nullable(),text:z.string(),model:z.string(),id:z.string()});
 export class OpenAIGateway implements AI {
  constructor(private operations:OperationGateway,private draftModel?:'gpt-5.6-terra'){}
- async generate<T>(role:keyof typeof roleModels,key:string,schema:z.ZodType<T>,instructions:string,input:unknown):Promise<T>{
+ async generate<T>(role:keyof typeof roleModels,key:string,schema:z.ZodType<T>,instructions:string,input:unknown,limits?:{maxOutputTokens:number}):Promise<T>{
   const model:Model=role==='A4'&&this.draftModel?this.draftModel:roleModels[role];const format=modelTextFormat(schema,key.replace(/[^a-z0-9_]/gi,'_'));
   const content=JSON.stringify(input);if(Buffer.byteLength(content)>24000)throw new Error('model_input_limit');
-  const maxOutput=2048;
+  const maxOutput=z.number().int().min(256).max(2048).parse(limits?.maxOutputTokens??2048);
   const params={model,instructions,input:content,text:{format},max_output_tokens:maxOutput,reasoning:{effort:'low' as const},service_tier:'default' as const,store:false};
   // UTF-8 byte count plus protocol margin is a deliberately conservative text-token ceiling.
   // Reserve the cache-write premium even though explicit cache writes are not requested.

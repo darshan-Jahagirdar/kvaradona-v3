@@ -3,6 +3,7 @@ import { userClient } from '../src/persistence/server';
 import { logout } from './login/actions';
 import { Packet } from '../src/contracts/pipeline';
 import { ReviewCard } from '../components/review-card';
+import {crmReviewProblems} from '../src/domain/crm-specialist';
 export const dynamic='force-dynamic';
 export default async function Inbox(){
  const client=await userClient();const {data:{user}}=await client.auth.getUser();if(!user) redirect('/login');
@@ -21,7 +22,7 @@ export default async function Inbox(){
  {(opps.error||jobs.error||status.error)&&<p role="alert" className="error">Some records could not be loaded. The displayed list may be incomplete.</p>}
  <div className="section-line"><h2>Research queue</h2><span>Strong evidence first · room for exploration</span></div>
  {!items.length&&<section className="empty"><span>◈</span><h2>Your first opportunity starts here.</h2><p>Run a bounded discovery campaign from the local worker. Its research, evidence and checked draft will appear here.</p></section>}
- {items.map(item=>item.parsed.success?<ReviewCard key={`${item.id}:${item.revision}`} id={item.id} revision={item.revision} packet={item.parsed.data}/>:<section className="card" key={item.id}><h2>Record needs investigation</h2><p>The saved packet does not match the current schema. No approval is available.</p></section>)}
+ {items.map(item=>item.parsed.success?<ReviewCard key={`${item.id}:${item.revision}`} id={item.id} revision={item.revision} packet={item.parsed.data} crmChecked={Boolean(item.parsed.data.crmSupplement&&!crmReviewProblems(item.parsed.data).length)}/>:<section className="card" key={item.id}><h2>Record needs investigation</h2><p>The saved packet does not match the current schema. No approval is available.</p></section>)}
  <section id="activity" className="activity"><h2>Recent activity</h2>{(jobs.data??[]).map(job=><div key={job.id}><span className="stage">{job.stage}</span><span>{job.status}</span><span className="muted">{job.error??'—'}</span></div>)}{!jobs.data?.length&&<p className="muted">No work has been queued yet.</p>}</section>
  <footer>Evidence can support a conversation. It does not establish buying intent or guarantee a reply.</footer></main></div>;
 }

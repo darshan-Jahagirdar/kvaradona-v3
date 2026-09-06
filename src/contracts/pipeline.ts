@@ -19,6 +19,12 @@ export const Research = z.object({
 export const ClaimReview = z.object({ claimId: z.string(), verdict: z.enum(['supported','inference','contradicted','unverifiable']), evidenceIds: z.array(z.string().uuid()), repair: z.string() });
 export const Review = z.object({ verdicts: z.array(ClaimReview), acceptable: z.boolean(), issues: z.array(z.string()), inputHash: z.string() });
 export const Draft = z.object({ subject: z.string().max(200), body: z.string().max(6000), recipient: z.string().email().nullable(), sender: z.string().email().nullable(), claimIds: z.array(z.string()) });
+export const CrmAnalysis = z.object({
+ findings:z.array(z.object({id:z.string(),observation:z.string(),evidenceId:z.string().uuid(),quote:z.string(),
+  hypothesis:z.string(),question:z.string(),deliverable:z.string()})).max(2),
+ limitations:z.array(z.string()).max(5),
+});
+export const CrmReview=Review.extend({verdicts:z.array(ClaimReview.extend({verdict:z.enum(['supported','contradicted','unverifiable'])}))});
 export const Contact = z.object({ name: z.string().nullable(), role: z.string(), email: z.string().email().nullable(),
   candidates:z.array(z.object({providerId:z.string(),displayName:z.string(),role:z.string(),company:z.string(),refreshedAt:z.string().nullable(),emailAvailable:z.boolean(),reason:z.string()})).max(5).optional(),
   emailStatus: z.enum(['provider_verified','catch_all','invalid','unknown']), employmentEvidence: z.string().nullable(),
@@ -29,6 +35,7 @@ export const Packet = z.object({
   draftReplacement:z.object({operationId:z.string().uuid(),model:z.literal('gpt-5.6-terra'),reason:z.string().min(20).max(1000),requestedAt:z.string()}).optional(),
   researchRequest:z.object({question:z.string().max(3000),requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
   evidence: z.array(Evidence), research: Research.optional(), packetReview: Review.optional(), draftReview: Review.optional(),
+  crmSupplement:z.object({inputHash:z.string(),analysis:CrmAnalysis,review:Review.optional()}).optional(),
   contact: Contact.optional(), draft: Draft.optional(), state: z.string(),
   relationship: z.enum(['unknown','clear','handoff','suppressed']).default('unknown'),
   notes: z.array(z.string()).default([]), specialistFindings: z.array(z.object({ profile: z.enum(['crm','cro','aeo']), metric: z.string(), observation: z.string(), hypothesis: z.string() })).default([]),
