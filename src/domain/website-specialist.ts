@@ -18,7 +18,7 @@ export function websiteContext(p:Packet){
 export function websiteReviewTarget(p:Packet){return JSON.stringify({inputHash:p.websiteSupplement?.inputHash,capture:p.websiteSupplement?.capture,analysis:p.websiteSupplement?.analysis});}
 export function normalizeWebsiteScope(analysis:WebsiteAnalysis){
  const condition='If the buyer confirms this goal and need: ';
- return {...analysis,findings:analysis.findings.map(f=>({...f,proposedChange:f.proposedChange.startsWith(condition)?f.proposedChange:condition+f.proposedChange}))};
+ return {...analysis,findings:analysis.findings.map(f=>({...f,id:/^web[-_a-z0-9]+$/i.test(f.id)?f.id:/^[a-z][-_a-z0-9]{0,79}$/i.test(f.id)?`web_${f.id}`:f.id,proposedChange:f.proposedChange.startsWith(condition)?f.proposedChange:condition+f.proposedChange}))};
 }
 export function websiteAnalysisProblems(p:Packet){
  const s=p.websiteSupplement;if(!s||!s.analysis)return ['Website analysis missing'];

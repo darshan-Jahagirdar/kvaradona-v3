@@ -56,3 +56,16 @@ it('bounds model context without deleting capture facts and retains every exact 
  expect(websiteContext(p).facts.find(f=>f.id===omitted.id)).toEqual(omitted);
  expect(JSON.stringify(capture)).toBe(before);
 });
+
+it('normalizes harmless model ID prefixes on a saved analysis without repeating A3 or changing findings',async()=>{
+ const {p,capture,analysis}=fixture(),h=harness(capture,analysis);
+ await websiteSpecialistStep(p,h.tools);
+ analysis.findings[0].id='cro-1';analysis.findings[1].id='aeo-1';
+ p.websiteSupplement!.analysis=structuredClone(analysis);
+ const prior=p.websiteSupplement!.analysis.findings.map(f=>({hypothesis:f.hypothesis,observationIds:f.observationIds}));
+ h.tools.ai={async generate(role,_key,schema,_instructions,input){h.calls.push(role);const value=input as {inputHash:string;analysis:WebsiteAnalysis};return schema.parse({inputHash:value.inputHash,acceptable:true,issues:[],verdicts:value.analysis.findings.map(f=>({findingId:f.id,observationIds:f.observationIds,verdict:'supported_hypothesis',reason:''}))});}};
+ expect(await websiteSpecialistStep(p,h.tools)).toBeNull();expect(h.calls).toEqual(['A5']);
+ expect(p.websiteSupplement!.analysis!.findings.map(f=>f.id)).toEqual(['web_cro-1','web_aeo-1']);
+ expect(p.websiteSupplement!.analysis!.findings.map(f=>({hypothesis:f.hypothesis,observationIds:f.observationIds}))).toEqual(prior);
+ expect(websiteReviewProblems(p)).toEqual([]);
+});
