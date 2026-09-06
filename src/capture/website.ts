@@ -4,6 +4,7 @@ import {safeRead,robotsAllows} from './fetch';
 import {launchResearchBrowser} from './specialists';
 import {websiteProbe} from './website-probe';
 import {selectWebsiteFacts} from './website-facts';
+import {websiteResources} from './website-resources';
 import {WebsiteCapture,type WebsiteFact} from '../contracts/website';
 import type {AIImage} from '../ai/images';
 export const websiteViewports={mobile:{width:390,height:844},desktop:{width:1440,height:900}} as const;
@@ -16,9 +17,9 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
  if(sourceDocument.status!==200||!/html/.test(sourceDocument.contentType))throw Error('website_document_unavailable');
  if(hostOf(sourceDocument.url)!==expectedHost)throw Error('website_redirect_account_mismatch');
  const id=randomUUID(),images:AIImage[]=[],screenshots:WebsiteCapture['screenshots']=[],facts:WebsiteFact[]=[],limitations:string[]=[];
- let requests=2,bytes=robots.bytes.length+sourceDocument.bytes.length,criticalFailures=0,resourceFailures=0,stable=true,bodyUsable=true;
- const cache=new Map<string,Promise<Awaited<ReturnType<typeof safeRead>>>>([[sourceDocument.url,Promise.resolve(sourceDocument)]]);
- const browser=await launchResearchBrowser();let active=0,reservedBytes=0;const waiting:(()=>void)[]=[];const controller=new AbortController();
+ let criticalFailures=0,resourceFailures=0,stable=true,bodyUsable=true;
+ const browser=await launchResearchBrowser(),controller=new AbortController();
+ const resources=websiteResources(sourceDocument,robots.bytes.length,controller.signal);
  const context=await browser.newContext({viewport:websiteViewports.mobile,deviceScaleFactor:1,serviceWorkers:'block',acceptDownloads:false,reducedMotion:'reduce'});
  const deadline=setTimeout(()=>{controller.abort();void context.close().catch(()=>{});},Math.max(1,45000-(Date.now()-started)));
  try{
@@ -27,21 +28,14 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
    if(req.method()!=='GET'||!['document','stylesheet','image','font','script'].includes(kind))return route.abort().catch(()=>{});
    try{
     if(Date.now()-started>45000)throw Error('capture_deadline');
-    let result=cache.get(req.url());
-    if(!result){
-     if(requests>=50||bytes>=10000000)throw Error('capture_request_limit');requests++;
-     result=(async()=>{if(active>=2)await new Promise<void>(resolve=>waiting.push(resolve));else active++;
-      let allowance=0;
-      try{controller.signal.throwIfAborted();const remaining=10000000-bytes-reservedBytes;if(remaining<=0)throw Error('capture_byte_limit');allowance=Math.min(1000000,remaining);reservedBytes+=allowance;const value=await safeRead(req.url(),allowance,controller.signal);bytes+=value.bytes.length;return value;}finally{reservedBytes-=allowance;const resume=waiting.shift();if(resume)resume();else active--;}
-     })();cache.set(req.url(),result);
-    }
-    const r=await result;if(r.status>=400){resourceFailures++;if(critical)criticalFailures++;}
+    const r=await resources.read(req.url(),kind);if(r.status>=400){resourceFailures++;if(critical)criticalFailures++;}
     await route.fulfill({status:r.status,contentType:r.contentType,body:r.bytes});
-   }catch{resourceFailures++;if(critical)criticalFailures++;await route.abort().catch(()=>{});}
+   }catch(error){if(!(error instanceof Error&&error.message==='capture_optional_limit'))resourceFailures++;if(critical)criticalFailures++;await route.abort().catch(()=>{});}
   });
   const page=await context.newPage();
   for(const viewport of ['mobile','desktop'] as const){
    await page.setViewportSize(websiteViewports[viewport]);await page.goto(sourceDocument.url,{waitUntil:'domcontentloaded',timeout:25000});
+   resources.releaseOptional();
    await Promise.race([page.evaluate(()=>document.fonts.ready.then(()=>undefined)),new Promise(resolve=>setTimeout(resolve,1500))]);
    await page.evaluate(()=>{document.querySelectorAll('video,audio').forEach(e=>(e as HTMLMediaElement).pause());});
    await page.waitForTimeout(500);
@@ -58,11 +52,12 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
    }
   }
  }finally{clearTimeout(deadline);controller.abort();await browser.close();}
- limitations.push('One public page, two viewports; no form submissions, menu activation, private analytics, field-performance or search-engine inclusion verification.','Network was bounded and proxied for safe public-only retrieval. Reduced motion was requested; media paused and screenshots disabled animations.');
+ limitations.push('One public page, two viewports; no form submissions, menu activation, private analytics, field-performance or search-engine inclusion verification.','Network was bounded and proxied for safe public-only retrieval. Reduced motion was requested; media paused and screenshots disabled animations.','Resource policy: critical content, scripts and styles take priority; initial image/font reads wait for DOMContentLoaded. Optional assets have separate collection ceilings.');
  if(resourceFailures)limitations.push(`${resourceFailures} resource requests failed or exceeded collection limits. Missing images or other resources may be capture artifacts, not website defects.`);
+ if(resources.skipped.size)limitations.push(`${resources.skipped.size} distinct image/font resources were intentionally omitted. Capture permits four images and four fonts, each at most 250 KB and 1.5 seconds, after initial content loading; missing assets or fallback fonts are collection artifacts, not site defects.`);
  if(criticalFailures)limitations.push(`${criticalFailures} critical resource requests failed or exceeded capture limits. Missing content or styling is not a verified site defect.`);
  if(!bodyUsable)limitations.push('The rendered content was too short or appeared to be an access challenge.');
  const {facts:bounded,omitted}=selectWebsiteFacts(facts);
  if(omitted)limitations.push(`${omitted} additional DOM observations were omitted at the capture context limit; page metadata and viewport/category coverage were prioritized.`);
- return {capture:WebsiteCapture.parse({id,url,finalUrl:sourceDocument.url,accountHost:expectedHost,observedAt:new Date().toISOString(),version:'web-1',mode:'live',complete:bodyUsable&&criticalFailures===0,facts:bounded,screenshots,limitations,requests,bytes,elapsedMs:Date.now()-started,renderStable:stable}),images};
+ return {capture:WebsiteCapture.parse({id,url,finalUrl:sourceDocument.url,accountHost:expectedHost,observedAt:new Date().toISOString(),version:'web-1',mode:'live',complete:bodyUsable&&criticalFailures===0,facts:bounded,screenshots,limitations,...resources.stats,elapsedMs:Date.now()-started,renderStable:stable}),images};
 }
