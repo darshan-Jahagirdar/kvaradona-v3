@@ -6,8 +6,8 @@ export const SamQuery=z.object({title:z.string().trim().min(2).max(120),postedFr
 export const SamSaved=z.object({status:z.number(),body:z.unknown(),observedAt:z.string().datetime()});
 const text=z.string().nullish();
 const Notice=z.object({noticeId:z.string().min(1).max(100),title:z.string(),solicitationNumber:text,fullParentPathName:text,fullParentPathCode:text,postedDate:text,type:text,baseType:text,active:text,responseDeadLine:text,reponseDeadLine:text,archiveDate:text,setAside:text,setAsideCode:text,typeOfSetAside:text,typeOfSetAsideDescription:text,naicsCode:text,description:text,uiLink:text,resourceLinks:z.array(z.string()).nullish(),award:z.unknown().optional()});
-export const ProcurementNotice=z.object({noticeId:z.string(),solicitationNumber:z.string().nullable(),buyer:z.string().nullable(),buyerCode:z.string().nullable(),title:z.string(),url:z.string().url(),postedAt:z.string().nullable(),observedAt:z.string().datetime(),type:z.string().nullable(),baseType:z.string().nullable(),active:z.enum(['yes','no','unknown']),deadlineRaw:z.string().nullable(),deadlineUtc:z.string().nullable(),archiveDate:z.string().nullable(),setAside:z.string().nullable(),naics:z.string().nullable(),awarded:z.boolean(),descriptionUrl:z.string().nullable(),attachmentUrls:z.array(z.string()),snapshotHash:z.string()});
-export type ProcurementNotice=z.infer<typeof ProcurementNotice>;
+import {ProcurementNotice} from '../contracts/procurement';
+export {ProcurementNotice} from '../contracts/procurement';
 export function samQuery(title:string,days=30,now=new Date()){
  z.number().int().min(1).max(90).parse(days);
  const format=(d:Date)=>`${String(d.getUTCMonth()+1).padStart(2,'0')}/${String(d.getUTCDate()).padStart(2,'0')}/${d.getUTCFullYear()}`;

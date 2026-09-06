@@ -9,7 +9,7 @@ export function procurementReadiness(n:ProcurementNotice,now=new Date()){
  if(!n.deadlineUtc)holds.push('Response deadline or timezone is unverified.');
  else if(Date.parse(n.deadlineUtc)<=now.getTime())holds.push('The response deadline has passed.');
  if(!n.buyer||!n.buyerCode)holds.push('Buyer attribution requires confirmation.');
- if(now.getTime()-Date.parse(n.observedAt)>86400000)holds.push('Refresh notice status and amendments before relying on it.');
+ if(Date.parse(n.observedAt)>now.getTime()||now.getTime()-Date.parse(n.observedAt)>86400000)holds.push('Refresh notice status and amendments before relying on it.');
  const kind=/sources sought/i.test(n.type??'')?'rfi':/^(solicitation|combined synopsis\/solicitation)$/i.test(n.type??'')?'solicitation':'other';
  if(kind==='other'&&!n.awarded)holds.push('Notice type requires review before preparing a response.');
  return {kind,holds,canPrepare:holds.length===0,eligibility:'unknown' as const};
@@ -39,4 +39,22 @@ export function procurementPreparation(n:ProcurementNotice,now=new Date()){
   ],
   limitations:['This is a preparation checklist, not a drafted or evidence-checked bid.','A published notice does not establish supplier eligibility. Submission remains outside this POC.'],
  };
+}
+
+export function procurementIdentity(n:ProcurementNotice){return `procurement:${n.source}:${n.buyerCode??'unresolved'}`;}
+
+import type {Packet} from '../contracts/pipeline';
+import {sourceQuote} from './policy';
+export function procurementDraftProblems(p:Packet){
+ const n=p.candidate?.procurementNotice;if(!n)return [];
+ const errors:string[]=[];
+ if(p.procurementDocuments?.snapshotHash!==n.snapshotHash)errors.push('Notice changed; collect current documents before drafting.');
+ if(!p.draft?.procurement)return [...errors,'Procurement response details are missing.'];
+ const d=p.draft.procurement;
+ for(const item of [...d.requirements,...(d.responseRoute?[d.responseRoute]:[])]){
+  const e=p.evidence.find(e=>e.id===item.evidenceId);
+  if(!e||e.origin!=='original'||e.accountHost!==procurementIdentity(n)||!item.quote.trim()||sourceQuote(item.quote,e.text)!==item.quote.replace(/\s+/g,' ').trim())errors.push('Procurement requirement or response route lacks an exact original-source citation.');
+ }
+ if(p.draft.recipient!==null||p.draft.sender!==null)errors.push('Procurement preparation must not invent an email recipient or sender.');
+ return errors;
 }

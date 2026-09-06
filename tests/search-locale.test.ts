@@ -1,0 +1,5 @@
+import {it,expect} from 'vitest';
+import {searchLocale} from '../src/domain/search-locale';
+import {discoveryPriority} from '../src/domain/policy';
+it('uses a documented all-country query for Singapore and rejects unsupported filters before spending',()=>{expect(searchLocale('HubSpot','SG')).toEqual({query:'HubSpot Singapore',country:'ALL',targetCountry:'SG'});expect(searchLocale('HubSpot','AU').country).toBe('AU');expect(()=>searchLocale('HubSpot','ZZ')).toThrow('unsupported_search_country');});
+it('does not promote generic ATS help documentation or educational ways-to-find lists to paid research',()=>{expect(discoveryPriority({url:'https://support.greenhouse.io/faq',title:'Careers page integration FAQ',description:'HubSpot integration'})).toBeLessThan(0);expect(discoveryPriority({url:'https://example.invalid/blog',title:'8 Ways to Find Companies Using HubSpot',description:'HubSpot'})).toBeLessThan(0);expect(discoveryPriority({url:'https://jobs.lever.co/company/123',title:'Revenue Operations Manager',description:'HubSpot implementation'})).toBeGreaterThan(0);});

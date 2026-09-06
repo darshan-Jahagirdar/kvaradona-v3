@@ -1,0 +1,6 @@
+import{it,expect}from'vitest';import{randomUUID}from'node:crypto';import{runStage}from'../src/stages/pipeline';
+it('reuses previously attempted original events across regional runs without another source/model job',async()=>{
+ let args:Record<string,unknown>={};const candidate={url:'https://example.invalid/job/1',title:'Revenue Operations',description:'HubSpot implementation',source:'brave',eventKey:'saved-event',country:'AU',language:'en',discoveredAt:new Date().toISOString()};
+ await runStage({async rpc(_name,input){args=input;return true;}},{id:randomUUID(),organization_id:randomUUID(),campaign_id:randomUUID(),opportunity_id:null,stage:'S02',business_key:'fixture',input_hash:'fixture',input_version:1,schema_version:'1',prompt_version:'11',attempt_token:randomUUID(),attempts:1,payload:{groups:[{source:'brave',country:'AU',language:'en',query:'HubSpot'}],groupIndex:0}},{knownEvidenceEvents:async()=>['saved-event'],search:async()=>[candidate],ai:{async generate(){throw Error('unexpected_model');}},fetchEvidence:async()=>{throw Error('unexpected_source');},relationship:async()=> 'unknown',contact:async()=>{throw Error('unexpected_contact');}});
+ expect(args.p_candidates).toEqual([]);expect((args.p_report as {reusedCandidates:unknown[]}).reusedCandidates).toEqual([candidate]);
+});

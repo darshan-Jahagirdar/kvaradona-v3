@@ -1,0 +1,10 @@
+import {Packet} from '../contracts/pipeline';
+import {discoveryPriority,reviewProblems,validateResearch} from './policy';
+import {draftResearch} from './crm-specialist';
+import {procurementDraftProblems} from './procurement';
+export function batchReport(rows:{id:string;revision:number;packet_hash:string;packet:unknown}[],labels:{opportunity_id:string;packet_hash:string;labels:unknown}[]){
+ const cases=rows.flatMap(row=>{const parsed=Packet.safeParse(row.packet);if(!parsed.success||parsed.data.mode==='fixture')return [];const p=parsed.data;
+ const checked=Boolean(p.packetReview&&p.research&&!reviewProblems(p.packetReview,p.research,p,JSON.stringify(p.research)).length&&p.draft&&p.research&&p.draftReview&&!reviewProblems(p.draftReview,draftResearch(p),p,JSON.stringify(p.draft)).length&&!procurementDraftProblems(p).length);
+ return [{id:row.id,revision:row.revision,source:p.candidate?.source??'unknown',country:p.candidate?.country??'unknown',effectiveSearchCountry:p.candidate?.searchCountry??p.candidate?.country??'unknown',language:p.candidate?.language??'unknown',company:p.research?.company??p.candidate?.procurementNotice?.buyer??null,state:p.state,decision:p.research&&!validateResearch(p.research,p).length?p.research.decision:null,sourceEvidence:p.evidence.filter(e=>e.origin==='original').length,checkedDraft:checked,baselineScore:p.candidate?discoveryPriority(p.candidate):null,humanLabels:labels.find(l=>l.opportunity_id===row.id&&l.packet_hash===row.packet_hash)?.labels??null}];});
+ return {generatedAt:new Date().toISOString(),targetDecisions:10,discovered:cases.length,decisions:cases.filter(c=>c.decision).length,checkedDrafts:cases.filter(c=>c.checkedDraft).length,humanRated:cases.filter(c=>c.humanLabels).length,procurementDrafts:cases.filter(c=>c.checkedDraft&&c.state==='procurement_review_ready').length,cases,limitations:['Discovered rows and source failures are not qualified decisions.','Search country/language is not verified buyer geography.','Rule baseline scores are for the same candidate pool; human labels are required to judge usefulness.','Sending, procurement submission and commercial outcomes are outside this POC.']};
+}

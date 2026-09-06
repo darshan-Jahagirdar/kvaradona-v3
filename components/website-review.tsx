@@ -1,7 +1,7 @@
 import type {Packet} from '../src/contracts/pipeline';
 import {displayDate} from '../src/domain/display-date';
 export function WebsiteReviewPanel({id,packet,checked}:{id:string;packet:Packet;checked:boolean}){
- const s=packet.websiteSupplement;if(!s)return null;
+ const s=packet.websiteSupplement;if(!s)return packet.websiteFailure?<section><h3>Website analysis · CRO / AEO</h3><p role="status">Capture unavailable. No website findings or model analysis were produced; the saved attempt will not repeat automatically.</p><p className="footnote">Recorded {displayDate(packet.websiteFailure.at,true)}</p></section>:null;
  return <section><h3>Website analysis · {s.profiles.map(p=>p.toUpperCase()).join(' / ')}</h3>
   <p className="footnote">{s.capture.mode==='live'?'Live public-page capture':'Synthetic page fixture'} · {displayDate(s.capture.observedAt,true)} · Evidence review: {checked?'checked':'pending or repair needed'}</p>
   {s.capture.mode==='fixture'&&<p className="footnote">Synthetic verification only. Analysis and review are mocked; no live model result or prospect qualification.</p>}

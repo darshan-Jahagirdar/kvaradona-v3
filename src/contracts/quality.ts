@@ -1,0 +1,2 @@
+import {z} from 'zod';
+export const QualityLabels=z.object({serviceRelevance:z.enum(['useful','unclear','irrelevant']),factualSupport:z.enum(['supported','needs_correction','unknown']),offerUsefulness:z.enum(['useful','needs_work','unknown']),buyerFit:z.enum(['appropriate','wrong_buyer','unknown']),editsRequired:z.enum(['none','minor','major','no_draft']),note:z.string().trim().min(1).max(2000),reviewSeconds:z.number().int().min(0).max(86400)});
