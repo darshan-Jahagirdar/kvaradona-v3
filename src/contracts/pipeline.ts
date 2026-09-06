@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {WebsiteSupplement,WebsiteProfile} from './website';
 export const Evidence = z.object({
   id: z.string().uuid(), url: z.string().url(), finalUrl: z.string().url(), title: z.string(),
   text: z.string().max(24000), contentHash: z.string(), retrievedAt: z.string().datetime(),
@@ -36,6 +37,8 @@ export const Packet = z.object({
   researchRequest:z.object({question:z.string().max(3000),requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
   evidence: z.array(Evidence), research: Research.optional(), packetReview: Review.optional(), draftReview: Review.optional(),
   crmSupplement:z.object({inputHash:z.string(),analysis:CrmAnalysis,review:Review.optional()}).optional(),
+  websiteSupplement:WebsiteSupplement.optional(),
+  websiteRequest:z.object({profiles:z.array(WebsiteProfile).min(1).max(2),url:z.string().url(),question:z.string(),requestedAt:z.string(),verificationOnly:z.boolean().default(false)}).optional(),
   contact: Contact.optional(), draft: Draft.optional(), state: z.string(),
   relationship: z.enum(['unknown','clear','handoff','suppressed']).default('unknown'),
   notes: z.array(z.string()).default([]), specialistFindings: z.array(z.object({ profile: z.enum(['crm','cro','aeo']), metric: z.string(), observation: z.string(), hypothesis: z.string() })).default([]),
@@ -49,6 +52,7 @@ export const Job = z.object({
 export type Packet = z.infer<typeof Packet>;
 export type Evidence = z.infer<typeof Evidence>;
 export type Research = z.infer<typeof Research>;
+export type Claim = z.infer<typeof Claim>;
 export type Review = z.infer<typeof Review>;
 export type Draft = z.infer<typeof Draft>;
 export type Contact = z.infer<typeof Contact>;

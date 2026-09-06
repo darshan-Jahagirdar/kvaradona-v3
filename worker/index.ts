@@ -8,6 +8,7 @@ import { OpenAIGateway } from '../src/ai/gateway';
 import { searchBrave } from '../src/providers/brave';
 import {ApolloContacts,type FreeContactAllowance} from '../src/providers/apollo';
 import { fetchEvidence } from '../src/capture/fetch';
+import {storeWebsiteCapture,loadWebsiteImages} from '../src/persistence/website-artifacts';
 import { captureWebsite } from '../src/capture/specialists';
 import { runStage } from '../src/stages/pipeline';
 const store=hostedStore(),client=serviceClient(),workerId=`laptop-${randomUUID()}`;let stop=false;
@@ -23,7 +24,7 @@ do{
   const lease=setInterval(()=>{void store.rpc('renew_job',{p_job:job.id,p_token:job.attempt_token}).catch(()=>{stop=true;});},20000);
   try{
    const draftModel=job.stage==='S11'?Packet.parse(job.payload).draftReplacement?.model:undefined;
-   await runStage(store,job,{ai:new OpenAIGateway(operations,draftModel),fetchEvidence,search:(key,q,c,l)=>searchBrave(operations,key,q,c,l),specialist:captureWebsite,
+   await runStage(store,job,{ai:new OpenAIGateway(operations,draftModel),fetchEvidence,search:(key,q,c,l)=>searchBrave(operations,key,q,c,l),specialist:captureWebsite,websiteCapture:(url,host)=>storeWebsiteCapture(url,host,job.organization_id,job.business_key),websiteImages:capture=>loadWebsiteImages(capture,job.organization_id),
     relationship:async host=>{const {data,error}=await client.from('relationships').select('status').eq('organization_id',job.organization_id).eq('account_host',host).maybeSingle();if(error)throw new Error('relationship_lookup_failed');if(!data)return 'unknown';if(data.status==='clear')return 'clear';return ['opt_out','bounce','replied'].includes(data.status)?'suppressed':'handoff';},
     contact:async(host,role,company)=>{
      const {data:limit,error}=await client.from('provider_limits').select('free_units,expires_at,evidence').eq('provider','apollo').single();if(error)throw new Error('contact_limit_read_failed');

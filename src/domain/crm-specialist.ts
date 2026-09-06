@@ -1,5 +1,6 @@
 import type {Packet,Research} from '../contracts/pipeline';
 import {hash,reviewProblems,validateResearch,sourceQuote} from './policy';
+import {websiteDraftClaims} from './website-specialist';
 
 export function crmInputHash(p:Packet){
  return hash({research:p.research,evidence:p.evidence.map(e=>({id:e.id,version:hash(e)}))});
@@ -38,7 +39,7 @@ function crmClaims(p:Packet):Research{
 export function draftResearch(p:Packet,available=false):Research{
  if(!p.research)throw Error('research_missing');
  const extra=p.crmSupplement?crmClaims(p).claims.filter(c=>available||p.draft?.claimIds.includes(c.id)):[];
- return {...p.research,claims:[...p.research.claims,...extra]};
+ return {...p.research,claims:[...p.research.claims,...extra,...websiteDraftClaims(p,available)]};
 }
 export function crmAnalysisProblems(p:Packet):string[]{
  if(!p.crmSupplement)return ['CRM analysis missing'];

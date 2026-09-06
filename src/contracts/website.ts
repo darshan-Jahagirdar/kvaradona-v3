@@ -1,0 +1,11 @@
+import {z} from 'zod';
+export const WebsiteProfile=z.enum(['cro','aeo']);
+export const WebsiteFact=z.object({id:z.string(),category:z.enum(['cta','form','navigation','mobile','performance','content','discovery','structure']),viewport:z.enum(['mobile','desktop','page']),selector:z.string().nullable(),text:z.string().max(1600)});
+export const Screenshot=z.object({viewport:z.enum(['mobile','desktop']),width:z.number().int().positive().max(1568),height:z.number().int().positive().max(1568),path:z.string(),sha256:z.string(),bytes:z.number().int().positive().max(2000000)});
+export const WebsiteCapture=z.object({id:z.string().uuid(),url:z.string().url(),finalUrl:z.string().url(),accountHost:z.string(),observedAt:z.string().datetime(),version:z.literal('web-1'),mode:z.enum(['live','fixture']),complete:z.boolean(),facts:z.array(WebsiteFact).max(80),screenshots:z.array(Screenshot).max(2),limitations:z.array(z.string()),requests:z.number().int(),bytes:z.number().int(),elapsedMs:z.number(),renderStable:z.boolean()});
+export const WebsiteAnalysis=z.object({coverage:z.array(z.object({profile:WebsiteProfile,result:z.enum(['findings','no_supported_findings','insufficient_evidence']),reason:z.string()})).max(2),findings:z.array(z.object({id:z.string(),profile:WebsiteProfile,observationIds:z.array(z.string()).min(1).max(3),hypothesis:z.string(),validationQuestion:z.string(),proposedChange:z.string()})).max(4),limitations:z.array(z.string()).max(6)});
+export const WebsiteReview=z.object({inputHash:z.string(),acceptable:z.boolean(),issues:z.array(z.string()),verdicts:z.array(z.object({findingId:z.string(),observationIds:z.array(z.string()),verdict:z.enum(['supported_hypothesis','unsupported']),reason:z.string()})).max(4)});
+export const WebsiteSupplement=z.object({inputHash:z.string(),profiles:z.array(WebsiteProfile).min(1).max(2),question:z.string(),capture:WebsiteCapture,analysis:WebsiteAnalysis.optional(),review:WebsiteReview.optional()});
+export type WebsiteCapture=z.infer<typeof WebsiteCapture>;
+export type WebsiteAnalysis=z.infer<typeof WebsiteAnalysis>;
+export type WebsiteFact=z.infer<typeof WebsiteFact>;
