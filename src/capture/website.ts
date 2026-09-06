@@ -3,6 +3,7 @@ import {hash,hostOf} from '../domain/policy';
 import {safeRead,robotsAllows} from './fetch';
 import {launchResearchBrowser} from './specialists';
 import {websiteProbe} from './website-probe';
+import {selectWebsiteFacts} from './website-facts';
 import {WebsiteCapture,type WebsiteFact} from '../contracts/website';
 import type {AIImage} from '../ai/images';
 export const websiteViewports={mobile:{width:390,height:844},desktop:{width:1440,height:900}} as const;
@@ -61,7 +62,7 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
  if(resourceFailures)limitations.push(`${resourceFailures} resource requests failed or exceeded collection limits. Missing images or other resources may be capture artifacts, not website defects.`);
  if(criticalFailures)limitations.push(`${criticalFailures} critical resource requests failed or exceeded capture limits. Missing content or styling is not a verified site defect.`);
  if(!bodyUsable)limitations.push('The rendered content was too short or appeared to be an access challenge.');
- const bounded:WebsiteFact[]=[];let factBytes=0;
- for(const f of facts){const size=Buffer.byteLength(JSON.stringify(f));if(factBytes+size>14000||bounded.length>=80){limitations.push('Additional DOM observations were omitted at the capture context limit.');break;}bounded.push(f);factBytes+=size;}
+ const {facts:bounded,omitted}=selectWebsiteFacts(facts);
+ if(omitted)limitations.push(`${omitted} additional DOM observations were omitted at the capture context limit; page metadata and viewport/category coverage were prioritized.`);
  return {capture:WebsiteCapture.parse({id,url,finalUrl:sourceDocument.url,accountHost:expectedHost,observedAt:new Date().toISOString(),version:'web-1',mode:'live',complete:bodyUsable&&criticalFailures===0,facts:bounded,screenshots,limitations,requests,bytes,elapsedMs:Date.now()-started,renderStable:stable}),images};
 }
