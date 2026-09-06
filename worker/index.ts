@@ -6,9 +6,9 @@ import { Job,Packet } from '../src/contracts/pipeline';
 import { OperationGateway } from '../src/usage/operations';
 import { OpenAIGateway } from '../src/ai/gateway';
 import { searchBrave } from '../src/providers/brave';
+import {ApolloContacts,type FreeContactAllowance} from '../src/providers/apollo';
 import { fetchEvidence } from '../src/capture/fetch';
 import { captureWebsite } from '../src/capture/specialists';
-import { contactPending } from '../src/domain/policy';
 import { runStage } from '../src/stages/pipeline';
 const store=hostedStore(),client=serviceClient(),workerId=`laptop-${randomUUID()}`;let stop=false;
 process.on('SIGINT',()=>{stop=true;});process.on('SIGTERM',()=>{stop=true;});
@@ -25,7 +25,12 @@ do{
    const draftModel=job.stage==='S11'?Packet.parse(job.payload).draftReplacement?.model:undefined;
    await runStage(store,job,{ai:new OpenAIGateway(operations,draftModel),fetchEvidence,search:(key,q,c,l)=>searchBrave(operations,key,q,c,l),specialist:captureWebsite,
     relationship:async host=>{const {data,error}=await client.from('relationships').select('status').eq('organization_id',job.organization_id).eq('account_host',host).maybeSingle();if(error)throw new Error('relationship_lookup_failed');if(!data)return 'unknown';if(data.status==='clear')return 'clear';return ['opt_out','bounce','replied'].includes(data.status)?'suppressed':'handoff';},
-    contact:async(_host,role)=>contactPending(role,'Apollo free quota and endpoint usability are not verified; no paid contact request made.'),
+    contact:async(host,role,company)=>{
+     const {data:limit,error}=await client.from('provider_limits').select('free_units,expires_at,evidence').eq('provider','apollo').single();if(error)throw new Error('contact_limit_read_failed');
+     let allowance:FreeContactAllowance|null=null;
+     try{const proof=JSON.parse(limit.evidence??'{}');if(['verified_free_plan','user_confirmed_free_allowance'].includes(proof.kind))allowance={remaining:limit.free_units,expiresAt:limit.expires_at??'',evidence:proof.source,verifiedFree:true};}catch{}
+     return new ApolloContacts(operations,allowance).resolve(host,role,company);
+    },
    });console.log(JSON.stringify({job:job.id,stage:job.stage,status:'completed'}));
   }catch(error){
    // Sanitized reason only. Never log raw provider errors, request headers or secrets.

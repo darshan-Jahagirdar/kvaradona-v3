@@ -55,7 +55,11 @@ export function reviewProblems(review: Review, research: Research, packet: Packe
     const v = verdicts[0];
     if (v.verdict === 'contradicted' || v.verdict === 'unverifiable') errors.push(`Unresolved material claim:${claim.id}`);
     if (claim.kind === 'fact' && v.verdict === 'inference') errors.push(`Fact needs qualification:${claim.id}`);
-    if (!v.evidenceIds.includes(claim.evidenceId) || v.evidenceIds.some(id => !packet.evidence.some(e => e.id === id))) errors.push(`Invalid review citation:${claim.id}`);
+    const anchor=packet.evidence.find(e=>e.id===claim.evidenceId);
+    // A reviewer may use the attributable version of the same original page for an inference/unknown.
+    // Facts still require their exact anchored evidence; unrelated pages and unknown IDs never substitute.
+    const matchingSource=v.evidenceIds.some(id=>id===claim.evidenceId||(claim.kind!=='fact'&&anchor&&packet.evidence.some(e=>e.id===id&&e.origin==='original'&&e.accountHost===research.accountHost&&eventKey(e.finalUrl)===eventKey(anchor.finalUrl))));
+    if (!matchingSource || v.evidenceIds.some(id => !packet.evidence.some(e => e.id === id))) errors.push(`Invalid review citation:${claim.id}`);
   }
   return errors;
 }
