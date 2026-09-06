@@ -1,10 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { serviceClient } from '../src/persistence/client';
 import { campaignProfile,hash } from '../src/domain/policy';
-if(!process.argv.includes('--authorized-one-dollar'))throw new Error('explicit_pilot_authorization_required');
+if(!process.argv.includes('--authorized-two-dollars'))throw new Error('explicit_pilot_authorization_required');
 const client=serviceClient(),project=JSON.parse(await readFile('.local/project.json','utf8'));
+const {data:budget,error:budgetError}=await client.from('budget').select('limit_usd').eq('id',1).single();
+if(budgetError||Number(budget.limit_usd)!==2)throw new Error('two_dollar_migration_required');
 const until=new Date(Date.now()+60*60000).toISOString();
-const {error:l}=await client.from('provider_limits').update({probe_enabled:true,verified_at:new Date().toISOString(),expires_at:until,evidence:'User authorized initial combined $1 verification from existing OpenAI/Brave balances. Task access is being probed; balance is not available from these credentials.'}).in('provider',['brave','openai']);if(l)throw new Error('provider_limits_failed');
+const {error:l}=await client.from('provider_limits').update({probe_enabled:true,verified_at:new Date().toISOString(),expires_at:until,evidence:'User authorized combined $2 cumulative verification from existing OpenAI/Brave balances. Prior spent and reserved amounts count; balances remain unknown.'}).in('provider',['brave','openai']);if(l)throw new Error('provider_limits_failed');
 const {error:b}=await client.from('budget').update({live_enabled:true}).eq('id',1);if(b)throw new Error('budget_enable_failed');
 const {error:c}=await client.from('campaigns').update({paused:false}).eq('id',project.campaignId).eq('organization_id',project.organizationId);if(c)throw new Error('campaign_enable_failed');
 const {error:j}=await client.from('jobs').upsert({organization_id:project.organizationId,campaign_id:project.campaignId,business_key:'initial-pilot-discovery:1',stage:'S02',input_hash:hash(campaignProfile),input_version:1,schema_version:'1',prompt_version:'1',payload:campaignProfile},{onConflict:'organization_id,business_key',ignoreDuplicates:true});if(j)throw new Error('pilot_enqueue_failed');

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { zodTextFormat } from 'openai/helpers/zod';
+import { modelTextFormat } from './format';
 import { z } from 'zod';
 import { required } from '../config/env';
 import { modelCost,money,usd,PRICE_VERSION,type Model } from '../usage/money';
@@ -8,9 +8,9 @@ export const roleModels={A1:'gpt-5.6-luna',A2:'gpt-5.6-terra',A3:'gpt-5.6-terra'
 export interface AI { generate<T>(role:keyof typeof roleModels,key:string,schema:z.ZodType<T>,instructions:string,input:unknown):Promise<T>; }
 const Result=z.object({status:z.string().nullable(),text:z.string(),model:z.string(),id:z.string()});
 export class OpenAIGateway implements AI {
- constructor(private operations:OperationGateway){}
+ constructor(private operations:OperationGateway,private draftModel?:'gpt-5.6-terra'){}
  async generate<T>(role:keyof typeof roleModels,key:string,schema:z.ZodType<T>,instructions:string,input:unknown):Promise<T>{
-  const model:Model=roleModels[role];const format=zodTextFormat(schema,key.replace(/[^a-z0-9_]/gi,'_'));
+  const model:Model=role==='A4'&&this.draftModel?this.draftModel:roleModels[role];const format=modelTextFormat(schema,key.replace(/[^a-z0-9_]/gi,'_'));
   const content=JSON.stringify(input);if(Buffer.byteLength(content)>24000)throw new Error('model_input_limit');
   const maxOutput=2048;
   const params={model,instructions,input:content,text:{format},max_output_tokens:maxOutput,reasoning:{effort:'low' as const},service_tier:'default' as const,store:false};

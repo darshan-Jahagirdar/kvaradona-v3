@@ -19,9 +19,11 @@ Only a privileged local operator can provision review membership or start a camp
 
 ## Execution and cost controls
 
-Initial SQL enforces a shared $1 OpenAI/Brave envelope, provider ceilings, a $0.90 campaign ceiling and $0.25 opportunity ceiling. Live execution starts disabled. Billable operations reserve budget before dispatch and checkpoint responses and usage before advancing. An uncertain provider call retains its reservation and blocks automatic replay. Missing usage is unknown, not zero.
+Versioned SQL enforces a shared $2 cumulative OpenAI/Brave envelope ($1.80 OpenAI, $0.20 Brave), a $0.90 campaign ceiling and $0.25 opportunity ceiling. Live execution starts disabled. Billable operations reserve budget before dispatch and checkpoint responses and usage before advancing. An uncertain provider call retains its reservation and blocks automatic replay. Missing usage is unknown, not zero. Raising the cap does not reset spent or held amounts.
 
-The explicit local pilot command is `node --import tsx scripts/start-pilot.ts --authorized-one-dollar`. It is only for the already-authorized initial verification budget; it does not prove an account balance or buy credits. It enables a one-hour probe window for OpenAI/Brave and queues one discovery run. Other providers remain disabled until their free quotas and endpoints are verified. No schedule is enabled by the pilot.
+An operator can deliberately replace one ambiguous initial draft with `node --import tsx scripts/replace-draft.ts OPERATION_UUID 'Specific reason for replacement'`. The SQL function accepts only a blocked current-version initial draft, preserves its full unknown reservation, queues one Terra replacement with an audit reason, and rejects replacement chains. Normal automatic replay remains blocked.
+
+The explicit local pilot command is `node --import tsx scripts/start-pilot.ts --authorized-two-dollars`. It is only for the already-authorized cumulative verification budget; it does not prove an account balance or buy credits. It enables a one-hour probe window for OpenAI/Brave and queues one discovery run. Other providers remain disabled until their free quotas and endpoints are verified. No schedule is enabled by the pilot.
 
 Evidence, drafts, review actions and failures persist in Supabase. Edits create a new version and require fresh checking. Contact-pending items are reviewable but cannot be approved for sending. The app never sends mail. Research questions atomically queue one job against the next opportunity version; paused campaigns remain paused. Provider failures retain their budget reservations. Future failures also write a secret-safe diagnostic journal to ignored `.local/provider-failures.jsonl`; this does not settle unknown charges.
 
