@@ -21,6 +21,7 @@ export const Research = z.object({
 });
 export const ClaimReview = z.object({ claimId: z.string(), verdict: z.enum(['supported','inference','contradicted','unverifiable']), evidenceIds: z.array(z.string().uuid()), repair: z.string() });
 export const Review = z.object({ verdicts: z.array(ClaimReview), acceptable: z.boolean(), issues: z.array(z.string()), inputHash: z.string() });
+export const WritingReview=z.object({inputHash:z.string(),acceptable:z.boolean(),relevance:z.enum(['clear','needs_work']),offerClarity:z.enum(['clear','needs_work']),naturalWriting:z.enum(['clear','needs_work']),nextStep:z.enum(['clear','needs_work']),issues:z.array(z.string()).max(5)});
 export const Draft = z.object({ subject: z.string().max(200), body: z.string().max(6000), recipient: z.string().email().nullable(), sender: z.string().email().nullable(), claimIds: z.array(z.string()) });
 export const ProcurementDraft=Draft.extend({procurement:ProcurementDetails});
 export const StoredDraft=Draft.extend({procurement:ProcurementDetails.optional()});
@@ -40,7 +41,7 @@ export const Packet = z.object({
   draftReplacement:z.object({operationId:z.string().uuid(),model:z.literal('gpt-5.6-terra'),reason:z.string().min(20).max(1000),requestedAt:z.string()}).optional(),
   draftCheckRequest:z.object({requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
   researchRequest:z.object({question:z.string().max(3000),requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
-  evidence: z.array(Evidence), research: Research.optional(), packetReview: Review.optional(), draftReview: Review.optional(),
+  evidence: z.array(Evidence), research: Research.optional(), packetReview: Review.optional(), draftReview: Review.optional(), writingReview:WritingReview.optional(),
   crmSupplement:z.object({inputHash:z.string(),analysis:CrmAnalysis,review:Review.optional()}).optional(),
   websiteSupplement:WebsiteSupplement.optional(),
   websiteFailure:z.object({inputHash:z.string(),reason:z.enum(['navigation_timeout','capture_unavailable']),at:z.string()}).optional(),

@@ -1,3 +1,4 @@
+import {WritingReview,writingInstruction,writingContext,draftHasAnchor} from '../domain/draft-quality';
 import {supportedService} from '../domain/service-fit';
 import { z } from 'zod';
 import { Packet,Research,Review,Draft,ProcurementDraft,CrmAnalysis,CrmReview,Candidate,type Job,type Evidence,type Contact } from '../contracts/pipeline';
@@ -160,19 +161,24 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   if(p.draftCheckRequest&&!p.draft)throw Error('draft_required');
   const procurement=p.candidate?.procurementNotice;
   if(procurement&&procurementReadiness(procurement).holds.length)throw Error('procurement_notice_requires_refresh');
+  if(!p.draft&&!draftHasAnchor(p)){p.state='draft_context_pending';p.notes.push('A supported company fact and useful offer are required before drafting. Unknown buying intent alone is not a blocker.');if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw Error('ownership_lost');return;}
   const draftSchema=procurement?ProcurementDraft:Draft;
-  const input={...context(p),research:draftResearch(p,true),recipient:p.contact?.email??null,sender:null,proof:[],instruction:'Write a short, useful email. No invented sender name, case studies or metrics. Use dated factual wording when current status is unknown; frame service need tentatively. One modest next step. recipient must equal the provided value (null means contact pending); sender null. cite claim IDs used.'};
+  const DraftAssessment=Review.extend({writing:WritingReview.omit({inputHash:true})});
+  const input={...context(p),research:writingContext(p),recipient:p.contact?.email??null,sender:null,proof:[],instruction:writingInstruction};
   if(procurement)input.instruction='Prepare a concise procurement response outline, not an outreach email or a submission-ready bid. Subject is the response title; body is a conditional approach. Fill procurement.requirements with at most three exact cited requirements and proposed responses or missing inputs. responseRoute must quote the original nominated instructions or be null. Include missing source documents and unverified company legal details, eligibility, registrations, pricing and proof in missingInputs. Never assert compliance, capacity, credentials or attachment review without evidence. recipient and sender must be null; cite claim IDs used. Keep output concise.';
   if(!p.draft)p.draft=await tools.ai.generate('A4','draft',draftSchema,common,input);
   if(procurement&&p.draft.procurement){p.draft.procurement.missingInputs=[...new Set([...(p.procurementDocuments?.missing??[]),'Verify supplier eligibility, registrations, legal bidder details and company proof.',...p.draft.procurement.missingInputs])].slice(0,8);}
   if(p.draft.recipient!==(p.contact?.email??null)||p.draft.sender!==null||p.draft.claimIds.some(id=>!draftResearch(p,true).claims.some(c=>c.id===id)))throw new Error('invalid_draft_identity_or_claims');
   for(let attempt=0;attempt<2;attempt++){
    const target:string=JSON.stringify(p.draft);
-   p.draftReview=await tools.ai.generate('A5',`draft_review_${attempt}`,Review,common,{...draftReviewContext(reviewPacket),research:draftResearch(p),draft:p.draft,inputHash:hash(target),instruction:'Review the exact draft, including claims newly introduced by its writer. Check all material research claims and all assertions in the message. Echo inputHash exactly. Do not approve invented pain, intent, timings, credentials, proof, measurement or contact identity. List repairs in issues and verdicts.'});
+   const assessment:z.infer<typeof DraftAssessment>=await tools.ai.generate('A5',`draft_review_${attempt}`,DraftAssessment,common,{...draftReviewContext(reviewPacket),research:draftResearch(p),draft:p.draft,inputHash:hash(target),instruction:'Review the exact draft, including claims newly introduced by its writer. Check all material research claims and all assertions in the message. Echo inputHash exactly. Do not approve invented pain, intent, timings, credentials, proof, measurement or contact identity. List factual repairs in issues and verdicts. Separately evaluate writing: is the message specific to this company, is the offer useful and clear, does it sound natural, and is there one easy next step? For procurement, judge the conditional approach and required submission next steps rather than email style. Writing.acceptable requires all four writing criteria clear. Put writing concerns only in writing.issues; factual concerns remain in the top-level review.'});
+   if(['relevance','offerClarity','naturalWriting','nextStep'].some(k=>assessment.writing[k as 'relevance']!=='clear'))assessment.writing.acceptable=false;
+   p.draftReview=Review.parse(assessment);p.writingReview={...assessment.writing,inputHash:hash(target)};
    const errors=[...reviewProblems(p.draftReview,draftResearch(p),p,target),...procurementDraftProblems(p)];
-   if(!errors.length){p.state=procurement?'procurement_review_ready':p.contact?.state==='resolved'?'review_ready':'contact_pending';break;}
-   if(attempt===1||p.draftCheckRequest){p.notes.push(...errors);p.state='draft_exception';break;}
-   p.draft=await tools.ai.generate('A4','draft_repair',draftSchema,common,{...input,prior:p.draft,review:p.draftReview,instruction:'Repair the specific unsupported wording; preserve factual anchors. This is the single permitted repair.'});
+   const writingErrors=p.writingReview&&!p.writingReview.acceptable?p.writingReview.issues:[];
+   if(!errors.length&&!writingErrors.length&&p.writingReview?.acceptable!==false){p.state=procurement?'procurement_review_ready':p.contact?.state==='resolved'?'review_ready':'contact_pending';break;}
+   if(attempt===1||p.draftCheckRequest){p.notes.push(...errors,...writingErrors);p.state=errors.length?'draft_exception':'draft_writing_review';break;}
+   p.draft=await tools.ai.generate('A4','draft_repair',draftSchema,common,{...input,prior:p.draft,review:p.draftReview,writingReview:p.writingReview,instruction:'Repair the specific factual or writing concerns; preserve the strongest factual anchor, useful offer and natural voice. This is the single permitted repair.'});
    if(p.draft.recipient!==(p.contact?.email??null)||p.draft.sender!==null||p.draft.claimIds.some(id=>!draftResearch(p,true).claims.some(c=>c.id===id)))throw new Error('invalid_repaired_draft_identity_or_claims');
   }
  }else throw new Error('unsupported_stage');
