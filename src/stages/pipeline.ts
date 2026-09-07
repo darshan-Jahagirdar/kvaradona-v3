@@ -1,3 +1,4 @@
+import {requireIntentDiscovery} from '../domain/intent-icp';
 import {collectCompanyContext} from './company-context';
 import type {searchApolloCompanies} from '../providers/apollo-companies';
 import {WritingReview,writingInstruction,writingContext,draftHasAnchor} from '../domain/draft-quality';
@@ -39,6 +40,7 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   const group=config.groups[config.groupIndex%config.groups.length];if(!group)throw new Error('search_group_missing');
   let candidates:z.infer<typeof Candidate>[],providerResult:unknown=null;
   if(group.source==='apollo'){
+   requireIntentDiscovery();
    if(!tools.companySearch)throw Error('company_source_unavailable');
    const result=await tools.companySearch('company_discovery',group);candidates=result.candidates;providerResult=result.providerResult;
   }else if(group.source==='sam'||group.source==='contracts_finder'){
