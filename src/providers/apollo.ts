@@ -16,18 +16,20 @@ function roleScore(title:string,role:string){const matches=contactTitles(role).s
 function httpReason(status:number){return status===401?'Apollo rejected the API key.':status===403?'Apollo denied this endpoint; key scope or account entitlement needs attention.':status===429?'Apollo rate limit reached; no immediate retry.':`Apollo returned HTTP ${status}; contact availability remains unknown.`;}
 export interface FreeContactAllowance {remaining:number;expiresAt:string;evidence:string;verifiedFree:boolean;}
 export type ContactOperations=Pick<OperationGateway,'run'>;
-export class ApolloContacts {
- constructor(private operations:ContactOperations,private allowance:FreeContactAllowance|null,private request:typeof fetch=fetch){}
- private async call(key:string,path:string,params:Record<string,string|string[]>,units:number){
+export async function callApollo(operations:ContactOperations,request:typeof fetch,key:string,path:string,params:Record<string,string|string[]>,units:number){
   const url=new URL('https://api.apollo.io/api/v1/'+path);for(const [name,value]of Object.entries(params))for(const v of Array.isArray(value)?value:[value])url.searchParams.append(name,v);
-  return this.operations.run(key,'apollo',{endpoint:path,params},'0',units,Envelope,async()=>{
-   const r=await this.request(url,{method:'POST',headers:{'x-api-key':required('APOLLO_API_KEY'),'Content-Type':'application/json',accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(15000)});
+  return operations.run(key,'apollo',{endpoint:path,params},'0',units,Envelope,async()=>{
+   const r=await request(url,{method:'POST',headers:{'x-api-key':required('APOLLO_API_KEY'),'Content-Type':'application/json',accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(15000)});
    const reader=r.body?.getReader();const chunks:Uint8Array[]=[];let size=0;
    if(reader)while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>1000000){await reader.cancel();throw new Error('apollo_response_limit');}chunks.push(value);}
    let body:unknown;try{body=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{body={invalidJson:true};}
    return {response:{httpStatus:r.status,body},usage:{endpoint:path,http_status:r.status,request_id:r.headers.get('x-request-id'),reserved_credits:units,credit_basis:units?'verified_free_allowance':'documented_zero_credit_endpoint',pricing_source:'https://docs.apollo.io/docs/api-pricing'},actual:'0'};
   });
  }
+export class ApolloContacts {
+ constructor(private operations:ContactOperations,private allowance:FreeContactAllowance|null,private request:typeof fetch=fetch){}
+ private call(key:string,path:string,params:Record<string,string|string[]>,units:number){return callApollo(this.operations,this.request,key,path,params,units);}
+
  async resolve(host:string,role:string,company:string):Promise<Contact>{
   if(!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host))throw new Error('invalid_account_domain');
   const pending=(reason:string,candidates:Contact['candidates']=[]):Contact=>({...contactPending(role,reason),source:'apollo',candidates});

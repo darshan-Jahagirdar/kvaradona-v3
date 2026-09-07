@@ -1,7 +1,2 @@
-export const focusedProfile={version:6,name:'Focused needs · four demand searches and one exploration',sendingEnabled:false,maxResearch:1,explorationShare:0.2,groups:[
- {source:'brave',region:'US',country:'US',language:'en',query:'CRM implementation RFP 2026 -template -guide'},
- {source:'brave',region:'Europe',country:'GB',language:'en',query:'CRM implementation tender 2026 -template -guide'},
- {source:'brave',region:'Australia',country:'AU',language:'en',query:'website redesign tender 2026 -template -guide'},
- {source:'brave',region:'Asia',country:'SG',language:'en',query:'workflow automation tender 2026 -template -guide'},
- {source:'brave',region:'US',country:'US',language:'en',query:'"HubSpot" "revenue operations" site:jobs.lever.co -"all openings"'},
-]};
+import {companyIcp} from './company-discovery';
+export const focusedProfile={version:7,name:'Apollo companies · US pilot',sendingEnabled:false,maxResearch:3,maxCandidates:5,explorationShare:0.2,icp:companyIcp,pilot:'US headquarters only for the initial pilot; full ICP geography remains US, Europe, Australia and Asia.',groups:[{source:'apollo',region:'US',country:'US',language:'en',page:1,query:''}]};

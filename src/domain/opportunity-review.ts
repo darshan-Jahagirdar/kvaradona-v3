@@ -8,6 +8,8 @@ export function companyIdentity(p:Packet):{key:string;name:string;basis:string}|
  if(n?.buyer)return {key:`procurement:${n.buyer.trim().toLowerCase()}`,name:n.buyer,basis:'Named procurement buyer'};
  const r=p.research;
  if(r&&p.evidence.some(e=>e.origin==='original'&&e.accountHost===r.accountHost)&&!/^unresolved|^unknown$/i.test(r.company))return {key:r.accountHost.toLowerCase().replace(/^www\./,''),name:r.company,basis:'Attributed original source'};
+ const company=p.candidate?.providerCompany;
+ if(company)return {key:company.domain??`apollo:${company.id}`,name:company.name,basis:'Apollo reported · original identity and need require research'};
  const provider=p.candidate?.providerRecord;
  if(provider?.company&&provider.companyDomain)return {key:provider.companyDomain.toLowerCase().replace(/^www\./,''),name:provider.company,basis:'Provider reported · identity needs checking'};
  return null;
