@@ -9,7 +9,7 @@ export function companyIdentity(p:Packet):{key:string;name:string;basis:string}|
  const r=p.research;
  if(r&&p.evidence.some(e=>e.origin==='original'&&e.accountHost===r.accountHost)&&!/^unresolved|^unknown$/i.test(r.company))return {key:r.accountHost.toLowerCase().replace(/^www\./,''),name:r.company,basis:'Attributed original source'};
  const company=p.candidate?.providerCompany;
- if(company)return {key:company.domain??`apollo:${company.id}`,name:company.name,basis:'Apollo reported · original identity and need require research'};
+ if(company)return {key:company.domain??`${company.provider}:${company.id}`,name:company.name,basis:`${company.provider==='explorium'?'Explorium/Bombora':'Apollo'} reported · original identity and need require research`};
  const provider=p.candidate?.providerRecord;
  if(provider?.company&&provider.companyDomain)return {key:provider.companyDomain.toLowerCase().replace(/^www\./,''),name:provider.company,basis:'Provider reported · identity needs checking'};
  return null;
@@ -20,7 +20,7 @@ export function reviewPlacement(p:Packet){
  const eligible=identity&&p.mode==='live'&&!rejected&&!['deferred','watch','relationship_handoff','research_requested','review_required'].includes(p.state)&&['priority','exploration'].includes(p.research?.decision??'')&&checked&&(!p.writingReview||p.writingReview.acceptable); 
  const section:ReviewSection=eligible?'opportunities':identity?'human':'sources';
  const supported=p.research&&!validateResearch(p.research,p).length&&p.packetReview?.acceptable;
- const need=supported?({external_demand:'Explicit request · verify current scope',initiative:'Relevant initiative · purchase unconfirmed',plausible:'Plausible fit · purchase unconfirmed',weak:'Insufficient evidence of need'}[p.research!.demand]):'Need not established';
+ const need=supported?({external_demand:'Explicit request · verify current scope',initiative:'Relevant initiative · purchase unconfirmed',plausible:'Plausible fit · purchase unconfirmed',weak:'Insufficient evidence of need'}[p.research!.demand]):p.candidate?.providerCompany?.intent.status==='provider_reported'?'Provider-reported topic research · purchase unconfirmed':'Need not established';
  const readiness=rejected?'Rejected':checked?'Checked draft · human review needed':p.draft?'Draft needs checking':'Research incomplete';
  return {identity,section,rejected,checked,need,readiness};
 }

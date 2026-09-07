@@ -19,7 +19,7 @@ export function required(name: string) {
 }
 export const credentialNames = {
   supabase: ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY', 'SUPABASE_SECRET_KEY'],
-  openai: ['OPENAI_API_KEY'], brave: ['BRAVE_SEARCH_API_KEY'], apollo: ['APOLLO_API_KEY'],
+  explorium: ['EXPLORIUM_API_KEY'], openai: ['OPENAI_API_KEY'], brave: ['BRAVE_SEARCH_API_KEY'], apollo: ['APOLLO_API_KEY'],
   theirstack: ['THEIRSTACK_API_KEY'], predictleads: ['PREDICTLEADS_API_KEY', 'PREDICTLEADS_API_TOKEN'],
   hirebase: ['HIREBASE_API_KEY'], sam: ['SAM_GOV_API_KEY'], pagespeed: ['PAGESPEED_API_KEY'],
 } as const;

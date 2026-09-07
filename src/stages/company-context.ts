@@ -10,6 +10,7 @@ export interface CompanyContextTools {
 }
 export async function collectCompanyContext(p:Packet,tools:CompanyContextTools):Promise<boolean>{
  const c=p.candidate!.providerCompany!;
+ if(c.provider==='explorium'&&(c.icp.status!=='match'||c.intent.status!=='provider_reported')){p.state='company_assessment_pending';p.notes.push(...c.icp.unknowns,c.intent.reason);return false;}
  if(c.icp.status==='mismatch'){p.state='icp_mismatch';p.notes.push(...c.icp.reasons);return false;}
  if(!c.domain){p.state='company_context_pending';p.notes.push('Company domain unavailable; original attribution needs human assessment.');return false;}
  const valid=(e:Evidence)=>e.origin==='original'&&e.accountHost===c.domain&&Date.parse(e.retrievedAt)>=Date.now()-7*86400000&&Date.parse(e.retrievedAt)<=Date.now()+60000;

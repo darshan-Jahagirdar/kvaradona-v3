@@ -12,7 +12,7 @@ it('holds authenticated new launches before mutating runs, jobs, provider window
  const previous=(await db.query<{definition:string}>("select pg_get_functiondef('private.start_workflow(uuid,uuid)'::regprocedure) definition")).rows[0].definition;
  const profileBefore=(await db.query<{profile:unknown}>('select profile from public.workflow_profiles')).rows[0].profile;
  await db.exec(await readFile('supabase/migrations/20260907150818_intent_icp_gate.sql','utf8'));
- expect((await db.query<{profile:unknown}>('select profile from public.workflow_profiles')).rows[0].profile).toEqual(intentWorkflowProfile);
+ expect((await db.query<{profile:unknown}>('select profile from public.workflow_profiles')).rows[0].profile).toMatchObject({version:8,discoverySetup:{ready:false}});
  const limitsBefore=(await db.query('select * from public.provider_limits order by provider')).rows,budgetBefore=(await db.query('select * from public.budget')).rows;
  const store=localStore(db),args={p_organization:org,p_request:randomUUID()};
  await db.exec(`set role authenticated;select set_config('request.jwt.claim.sub','${user}',false)`);

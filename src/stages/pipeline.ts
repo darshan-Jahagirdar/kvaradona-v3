@@ -1,6 +1,5 @@
 import {requireIntentDiscovery} from '../domain/intent-icp';
 import {collectCompanyContext} from './company-context';
-import type {searchApolloCompanies} from '../providers/apollo-companies';
 import {WritingReview,writingInstruction,writingContext,draftHasAnchor} from '../domain/draft-quality';
 import {supportedService} from '../domain/service-fit';
 import { z } from 'zod';
@@ -19,7 +18,7 @@ import {procurementReadiness,procurementDraftProblems,procurementIdentity} from 
 import type {procurementEvidence} from '../capture/procurement';
 import type {searchTheirStack} from '../providers/theirstack';
 export interface StageTools extends WebsiteTools {
- companySearch?:(key:string,group:DiscoveryGroup)=>ReturnType<typeof searchApolloCompanies>;
+ companySearch?:(key:string,group:DiscoveryGroup)=>Promise<{candidates:z.infer<typeof Candidate>[];providerResult:unknown}>;
  companyEvidence?:(host:string)=>Promise<Evidence[]>;
  knownEvidenceEvents?:()=>Promise<string[]>;
  procurementSearch?:(key:string,group:DiscoveryGroup)=>Promise<ProcurementNotice[]>;
@@ -39,8 +38,8 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   const config=DiscoveryConfig.parse(job.payload);
   const group=config.groups[config.groupIndex%config.groups.length];if(!group)throw new Error('search_group_missing');
   let candidates:z.infer<typeof Candidate>[],providerResult:unknown=null;
-  if(group.source==='apollo'){
-   requireIntentDiscovery();
+  if(group.source==='apollo'||group.source==='explorium'){
+   if(group.source==='apollo')requireIntentDiscovery();
    if(!tools.companySearch)throw Error('company_source_unavailable');
    const result=await tools.companySearch('company_discovery',group);candidates=result.candidates;providerResult=result.providerResult;
   }else if(group.source==='sam'||group.source==='contracts_finder'){
@@ -54,8 +53,8 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   const known=group.source==='brave'&&tools.knownEvidenceEvents?new Set(await tools.knownEvidenceEvents()):new Set<string>();
   const reusedCandidates=candidates.filter(c=>known.has(c.eventKey));candidates=candidates.filter(c=>!known.has(c.eventKey));
   const seen=new Set<string>();const deduped=candidates.filter(c=>{const key=c.providerRecord?`${c.source}:${c.providerRecord.id}`:c.eventKey;if(seen.has(key))return false;seen.add(key);return true;}).sort((a,b)=>discoveryPriority(b)-discoveryPriority(a));
-  const report={reusedCandidates,mode:process.env.KVARA_FIXTURE==='1'?'fixture':'live',group,groupIndex:config.groupIndex,maxResearch:config.maxResearch,candidates:deduped,providerResult,decision:'bounded_discovery',reason:group.source==='apollo'?'Company attributes are provider reported. At most five companies and three context assessments; intent unknown.':'Source and job geography are recorded separately. Provider records require original-source checking; research at most one new candidate.'};
-  if(await store.rpc(group.source==='apollo'?'ingest_company_discovery':'ingest_discovery',{p_job:job.id,p_token:job.attempt_token,p_candidates:deduped.slice(0,group.source==='apollo'?5:4),p_report:report})!==true)throw new Error('ownership_lost');return;
+  const report={reusedCandidates,mode:process.env.KVARA_FIXTURE==='1'?'fixture':'live',group,groupIndex:config.groupIndex,maxResearch:config.maxResearch,candidates:deduped,providerResult,decision:'bounded_discovery',reason:group.source==='explorium'?'Explorium/Bombora intent is provider-reported research activity. Only current intent and checked ICP candidates proceed to bounded context research.':group.source==='apollo'?'Company attributes are provider reported. At most five companies and three context assessments; intent unknown.':'Source and job geography are recorded separately. Provider records require original-source checking; research at most one new candidate.'};
+  if(await store.rpc(['apollo','explorium'].includes(group.source)?'ingest_company_discovery':'ingest_discovery',{p_job:job.id,p_token:job.attempt_token,p_candidates:deduped.slice(0,['apollo','explorium'].includes(group.source)?5:4),p_report:report})!==true)throw new Error('ownership_lost');return;
  }
  const p=Packet.parse(job.payload);let nextStage:string|null=null;
  const procurement=p.candidate?.procurementNotice;

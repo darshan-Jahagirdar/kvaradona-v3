@@ -5,6 +5,7 @@ import { hostedStore,serviceClient } from '../src/persistence/client';
 import { Job,Packet } from '../src/contracts/pipeline';
 import { OperationGateway } from '../src/usage/operations';
 import { OpenAIGateway } from '../src/ai/gateway';
+import {searchExploriumCompanies} from '../src/providers/explorium';
 import {searchApolloCompanies} from '../src/providers/apollo-companies';
 import { searchBrave } from '../src/providers/brave';
 import {searchTheirStack} from '../src/providers/theirstack';
@@ -31,7 +32,7 @@ do{
   const lease=setInterval(()=>{void heartbeat('running').catch(()=>{stop=true;});void store.rpc('renew_job',{p_job:job.id,p_token:job.attempt_token}).catch(()=>{stop=true;});},20000);
   try{
    const draftModel=job.stage==='S11'?Packet.parse(job.payload).draftReplacement?.model:undefined;
-   await runStage(store,job,{companySearch:(key,group)=>searchApolloCompanies(operations,key,group),companyEvidence:async host=>{
+   await runStage(store,job,{companySearch:(key,group)=>group.source==='explorium'?searchExploriumCompanies(operations,key,group):searchApolloCompanies(operations,key,group),companyEvidence:async host=>{
     const r=await client.from('opportunities').select('packet').eq('organization_id',job.organization_id).neq('id',job.opportunity_id??'00000000-0000-0000-0000-000000000000').eq('packet->research->>accountHost',host).gte('updated_at',new Date(Date.now()-7*86400000).toISOString()).limit(10);if(r.error)throw Error('company_evidence_lookup_failed');
     return r.data.flatMap(row=>{const p=Packet.safeParse(row.packet);return p.success&&p.data.mode==='live'?p.data.evidence:[];});
    },knownEvidenceEvents:async()=>{const r=await client.from('opportunities').select('event_key').eq('organization_id',job.organization_id).neq('state','discovered').neq('packet->>mode','fixture').gte('updated_at',new Date(Date.now()-7*86400000).toISOString());if(r.error)throw Error('known_source_lookup_failed');return r.data.map(x=>x.event_key);},ai:new OpenAIGateway(operations,draftModel),fetchEvidence,search:(key,q,c,l)=>searchBrave(operations,key,q,c,l),jobSearch:(key,group,seen)=>searchTheirStack(operations,key,group,seen),procurementSearch:(key,g)=>{if(!g.asOf)throw Error('frozen_search_date_required');return g.source==='sam'?searchSam(operations,key,samQuery(g.query||'CRM',g.postedWithinDays,new Date(g.asOf))):searchContractsFinder(operations,key,contractsQuery(new Date(g.asOf)));},procurementEvidence:n=>procurementEvidence(operations,n),specialist:captureWebsite,websiteCapture:(url,host)=>storeWebsiteCapture(url,host,job.organization_id,job.business_key),websiteImages:capture=>loadWebsiteImages(capture,job.organization_id),
@@ -40,7 +41,7 @@ do{
      const {data:limit,error}=await client.from('provider_limits').select('free_units,expires_at,evidence').eq('provider','apollo').single();if(error)throw new Error('contact_limit_read_failed');
      let allowance:FreeContactAllowance|null=null;
      try{const proof=JSON.parse(limit.evidence??'{}');if(['verified_free_plan','user_confirmed_free_allowance'].includes(proof.kind))allowance={remaining:limit.free_units,expiresAt:limit.expires_at??'',evidence:proof.source,verifiedFree:true};}catch{}
-     return new ApolloContacts(operations,allowance).resolve(host,role,company);
+     return new ApolloContacts(operations,allowance).resolve(host,role,company,Packet.safeParse(job.payload).data?.candidate?.providerCompany?.provider==='explorium');
     },
    });console.log(JSON.stringify({job:job.id,stage:job.stage,status:'completed'}));
   }catch(error){
