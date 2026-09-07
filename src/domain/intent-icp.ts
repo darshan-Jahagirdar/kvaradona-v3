@@ -7,6 +7,6 @@ export const intentIcp={
  intentTopics:['HubSpot','Monday.com','SEO','Website','CRM','Marketing Automation'],
 };
 export const intentSetup={ready:true,code:'intent_source_verified',reason:'Explorium/Bombora trial discovery and dated intent enrichment verified. Active pilot: Pardot.'} as const;
-export const intentWorkflowProfile={version:9,name:'Pardot intent · full ICP',sendingEnabled:false,maxResearch:3,maxCandidates:5,icp:intentIcp,activeIntentTopics:['media & advertising: pardot'],discoverySetup:intentSetup,groups:[{source:'explorium',region:'unspecified',country:'US',language:'en',page:1,query:''}]};
+export const intentWorkflowProfile={version:9,name:'Pardot intent · full ICP',sendingEnabled:false,maxResearch:4,maxCandidates:4,icp:intentIcp,activeIntentTopics:['media & advertising: pardot'],discoverySetup:intentSetup,groups:[{source:'explorium',region:'unspecified',country:'US',language:'en',page:1,query:''}]};
 /** Apollo company-only discovery stays disabled; verified intent has its own source. */
 export function requireIntentDiscovery(){throw new Error('apollo_intent_access_unverified');}

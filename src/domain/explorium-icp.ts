@@ -1,5 +1,8 @@
 import {intentIcp} from './intent-icp';
 export const exploriumPilotTopic='media & advertising: pardot';
+// Companies requested per run. Every discovered company is enriched and researched, so a run costs
+// 2 credits discovery + 2 credits intent per company. Four keeps a complete run at 16 verified-trial credits.
+export const exploriumPageSize=4;
 // Values verified through Explorium's industry autocomplete. These are provider classifications.
 export const exploriumIndustries=['it services and it consulting','construction','advertising services','real estate','hospitals and health care','business consulting and services','operations consulting','software development','consumer services','motor vehicle manufacturing','retail motor vehicles','wholesale motor vehicles and parts','motor vehicle parts manufacturing','education','education management','higher education','education administration programs','primary and secondary education','design services','hospitality'];
 export const discoveryExcludedDomains=['crossover.com','wsj.com','forbes.com','github.com','nytimes.com','higgsfield.ai'];

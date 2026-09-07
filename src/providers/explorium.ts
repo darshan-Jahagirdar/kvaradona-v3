@@ -3,7 +3,7 @@ import {required} from '../config/env';
 import {Candidate} from '../contracts/pipeline';
 import {ProviderCompany,type DiscoveryGroup} from '../contracts/discovery';
 import {hash,hostOf} from '../domain/policy';
-import {exploriumFilters,exploriumIcp,exploriumPilotTopic,discoveryExcludedDomains} from '../domain/explorium-icp';
+import {exploriumFilters,exploriumIcp,exploriumPilotTopic,exploriumPageSize,discoveryExcludedDomains} from '../domain/explorium-icp';
 import type {ContactOperations} from './apollo';
 const Envelope=z.object({httpStatus:z.number().int(),body:z.unknown()});
 const Row=z.object({business_id:z.string().regex(/^[a-f0-9]{32}$/),name:z.string().min(1),domain:z.string(),country_name:z.string().nullable().optional(),number_of_employees_range:z.string().nullable().optional(),naics_description:z.string().nullable().optional(),business_description:z.string().nullable().optional(),business_intent_topics:z.array(z.object({topic:z.string(),score:z.number()})).optional()});
@@ -23,7 +23,7 @@ export async function callExplorium(operations:ContactOperations,key:string,path
  return result.body;
 }
 export function exploriumCandidates(body:unknown,observedAt=new Date().toISOString()){
- const response=z.object({data:z.array(z.unknown()).max(5),page:z.object({next_cursor:z.string().nullable().optional()}).optional()}).parse(body);
+ const response=z.object({data:z.array(z.unknown()).max(exploriumPageSize),page:z.object({next_cursor:z.string().nullable().optional()}).optional()}).parse(body);
  const candidates:z.infer<typeof Candidate>[]=[];let invalid=0,excluded=0;
  for(const raw of response.data){
   const parsed=Row.safeParse(raw);if(!parsed.success){invalid++;continue;}const r=parsed.data;
@@ -54,11 +54,11 @@ export function applyExploriumIntent(c:z.infer<typeof Candidate>,body:unknown,no
  c.providerCompany!.intent={status:'provider_reported',reason:'Explorium/Bombora reports recent topic research, not a confirmed purchase or project.',topics:matching.map(t=>({topic:t.topic,score:t.composite_score,sourceDate:date}))};return c;
 }
 export async function searchExploriumCompanies(operations:ContactOperations,key:string,group:DiscoveryGroup,request:typeof fetch=fetch){
- const body={mode:'full',page_size:5,filters:exploriumFilters(),...(group.nextCursor?{next_cursor:group.nextCursor}:{})};
- // The measured intent-filtered request charged 2 credits/company. Reserve that for the whole page.
- const result=exploriumCandidates(await callExplorium(operations,key,'businesses',body,10,request));let enriched=0;
+ const body={mode:'full',page_size:exploriumPageSize,filters:exploriumFilters(),...(group.nextCursor?{next_cursor:group.nextCursor}:{})};
+ // The measured intent-filtered request charged 2 credits/company. Reserve exactly that for the requested page.
+ const result=exploriumCandidates(await callExplorium(operations,key,'businesses',body,2*exploriumPageSize,request));let enriched=0;
  for(const c of result.candidates){
-  if(c.providerCompany!.icp.status!=='match'||enriched>=3)continue;
+  if(c.providerCompany!.icp.status!=='match'||enriched>=exploriumPageSize)continue;
   const detail=await callExplorium(operations,`${key}:intent:${c.providerCompany!.id}`,'businesses/bombora_intent/enrich',{business_ids:[c.providerCompany!.id],parameters:{topics:[exploriumPilotTopic],min_score:61}},2,request);
   applyExploriumIntent(c,detail);enriched++;
  }
