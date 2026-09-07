@@ -3,7 +3,7 @@ import { BlockList,isIP } from 'node:net';
 import { Agent,request } from 'undici';
 import { load } from 'cheerio';
 import { randomUUID } from 'node:crypto';
-import { hash,hostOf } from '../domain/policy';
+import { hash,hostOf,firstPartyATS } from '../domain/policy';
 import type { Evidence } from '../contracts/pipeline';
 const blocked=new BlockList();
 for(const [ip,prefix] of [['0.0.0.0',8],['10.0.0.0',8],['100.64.0.0',10],['127.0.0.0',8],['169.254.0.0',16],['172.16.0.0',12],['192.0.0.0',24],['192.0.2.0',24],['192.168.0.0',16],['198.18.0.0',15],['198.51.100.0',24],['203.0.113.0',24],['224.0.0.0',4],['240.0.0.0',4]] as const)blocked.addSubnet(ip,prefix,'ipv4');
@@ -44,7 +44,6 @@ export async function fetchEvidence(input:string):Promise<Evidence>{
  return extractEvidence(input,r.url,r.text);
 }
 const boardHost=(host:string)=>/(^|\.)(ashbyhq\.com|greenhouse\.io|lever\.co|jobleads\.com|bebee\.com|revopsroles\.com|linkedin\.com|indeed\.com)$/.test(host);
-const firstPartyATS=(host:string)=>/(^|\.)(ashbyhq\.com|greenhouse\.io|lever\.co)$/.test(host);
 /** Extract structured employer attribution before removing scripts; the publishing board is never the buyer. */
 export function extractEvidence(input:string,finalUrl:string,html:string,now=new Date()):Evidence{
  const $=load(html),publisher=hostOf(finalUrl);let job:Record<string,unknown>|undefined;

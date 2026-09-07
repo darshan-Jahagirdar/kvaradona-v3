@@ -7,4 +7,9 @@ export function assessCompany(employees:number|null,country:string|null,group:Di
  if(!country)unknowns.push('Headquarters country unavailable.');else if([group.country,companyCountries[group.country]].some(v=>v?.toLowerCase()===country.toLowerCase()))reasons.push('Reported headquarters matches this pilot country.');else unknowns.push('Reported headquarters differs from the requested country; assess operating geography before excluding.');
  return {status:mismatch?'mismatch' as const:employees===null||reasons.length<2?'unknown' as const:'match' as const,reasons,unknowns,searchCountry:group.country};
 }
-export function companyContextQuery(c:ProviderCompany){return `site:${c.domain} (Pardot OR Salesforce OR "marketing automation" OR CRM OR HubSpot OR "revenue operations" OR "workflow automation" OR "digital transformation" OR "website redesign")`;}
+/** Evidence of a current need, not a technology mention. A named company makes a short quoted-name query
+ *  viable, unlike the multi-clause discovery queries that returned nothing during calibration. */
+export function companyContextQuery(c:ProviderCompany){
+ const name=c.name.replace(/["“”]/g,' ').replace(/\s+/g,' ').trim();
+ return `"${name}" ("revenue operations" OR "marketing operations" OR "marketing automation" OR "CRM implementation")`;
+}

@@ -3,7 +3,10 @@ export const exploriumPilotTopic='media & advertising: pardot';
 // Values verified through Explorium's industry autocomplete. These are provider classifications.
 export const exploriumIndustries=['it services and it consulting','construction','advertising services','real estate','hospitals and health care','business consulting and services','operations consulting','software development','consumer services','motor vehicle manufacturing','retail motor vehicles','wholesale motor vehicles and parts','motor vehicle parts manufacturing','education','education management','higher education','education administration programs','primary and secondary education','design services','hospitality'];
 export const discoveryExcludedDomains=['crossover.com','wsj.com','forbes.com','github.com','nytimes.com','higgsfield.ai'];
-export function exploriumFilters(){return {country_code:{values:intentIcp.countries.map(c=>c.code.toLowerCase())},company_size:{values:['201-500','501-1000','1001-5000','5001-10000']},linkedin_category:{values:exploriumIndustries},business_intent_topics:{topics:[exploriumPilotTopic]}};}
+// Only bands wholly inside 500-10,000 are requested. The overlapping 201-500 band was dropped after two live runs:
+// it consumed 2 credits per company and every result stalled as `unknown`, unable to be enriched or researched.
+// exploriumIcp still treats a boundary-crossing band as unknown if the provider returns one.
+export function exploriumFilters(){return {country_code:{values:intentIcp.countries.map(c=>c.code.toLowerCase())},company_size:{values:['501-1000','1001-5000','5001-10000']},linkedin_category:{values:exploriumIndustries},business_intent_topics:{topics:[exploriumPilotTopic]}};}
 export function exploriumIcp(row:{number_of_employees_range?:string|null;country_name?:string|null;business_description?:string|null;naics_description?:string|null}){
  const reasons:string[]=[],unknowns:string[]=[];let mismatch=false;
  const range=row.number_of_employees_range?.match(/^(\d+)-(\d+)$/),min=range?Number(range[1]):null,max=range?Number(range[2]):null;
