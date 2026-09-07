@@ -1,5 +1,5 @@
 export const stageNames:Record<string,string>={S02:'Finding relevant sources',S04:'Checking original evidence',S06:'Researching the company and need',S06R:'Checking source attribution',S08:'Analyzing relevant CRM / website findings',S09:'Checking the evidence and offer',S10:'Finding the right contact',S11:'Writing and checking the draft'};
-export type WorkflowStatus={run?:{id:string;created_at:string};worker:{online:boolean;seenAt:string|null};budget:{live_enabled?:boolean;spent_usd?:string;reserved_usd?:string;limit_usd?:string};jobs:{id:string;opportunity_id:string|null;stage:string;status:string;error:string|null}[];opportunities:{id:string;state:string;name:string}[]};
+export type WorkflowStatus={companyCount?:number;run?:{id:string;created_at:string};worker:{online:boolean;seenAt:string|null};budget:{live_enabled?:boolean;spent_usd?:string;reserved_usd?:string;limit_usd?:string};jobs:{id:string;opportunity_id:string|null;stage:string;status:string;error:string|null}[];opportunities:{id:string;state:string;name:string}[]};
 export function workflowSummary(s:WorkflowStatus){
  const running=s.jobs.filter(j=>j.status==='running'),queued=s.jobs.filter(j=>j.status==='queued'),failed=s.jobs.filter(j=>['blocked','failed'].includes(j.status));
  const budgetPaused=s.budget.live_enabled===false||failed.some(j=>/budget|quota/.test(j.error??''));

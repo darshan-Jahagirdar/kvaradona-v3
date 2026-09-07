@@ -9,6 +9,11 @@ it('launches one bounded batch, prevents duplicates and cross-tenant starts, pre
  const jid=await enqueue(db);await db.exec("update public.budget set live_enabled=true;update public.provider_limits set verified_at=now(),expires_at=now()-interval '1 day',probe_enabled=true where provider in('openai','brave');");
  for(const provider of ['openai','brave'])await db.query("insert into public.provider_operations(organization_id,job_id,campaign_id,operation_key,provider,request_hash,state,reserved_usd,actual_usd,units) select organization_id,id,campaign_id,$2,$2,'hash','succeeded',0.01,0.01,0 from public.jobs where id=$1",[jid,provider]);
  await db.query("insert into public.provider_operations(organization_id,job_id,campaign_id,operation_key,provider,request_hash,state,reserved_usd,units) select organization_id,id,campaign_id,'unknown','openai','hash','ambiguous',0.08,0 from public.jobs where id=$1",[jid]);
+ const originalProfile=(await db.query('select profile from public.workflow_profiles')).rows;
+ await db.exec(await readFile('supabase/migrations/20260907135634_focused_query_calibration.sql','utf8'));
+ expect((await db.query('select profile from public.workflow_profiles')).rows).not.toEqual(originalProfile);
+ await db.exec(await readFile('supabase/recovery/010_focused_query_calibration.sql','utf8'));
+ expect((await db.query('select profile from public.workflow_profiles')).rows).toEqual(originalProfile);
  const before=(await db.query('select * from public.provider_operations order by operation_key')).rows;
  const store=localStore(db);await db.exec(`set role authenticated;select set_config('request.jwt.claim.sub','${user}',false)`);
  const args={p_organization:org,p_request:randomUUID()};const result=await store.rpc('start_workflow',args) as {id:string};

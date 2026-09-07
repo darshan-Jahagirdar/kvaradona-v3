@@ -1,7 +1,7 @@
 export const focusedProfile={version:6,name:'Focused needs · four demand searches and one exploration',sendingEnabled:false,maxResearch:1,explorationShare:0.2,groups:[
- {source:'brave',region:'US',country:'US',language:'en',query:'("CRM implementation" OR "CRM migration") ("request for proposal" OR "seeking a partner") -template -guide -sample'},
- {source:'brave',region:'Europe',country:'GB',language:'en',query:'("CRM" OR "workflow automation") ("invites proposals" OR "invitation to tender") -template -guide -training'},
- {source:'brave',region:'Australia',country:'AU',language:'en',query:'("website redesign" OR "website development") ("request for proposal" OR "invites tenders") -template -guide'},
- {source:'brave',region:'Asia',country:'SG',language:'en',query:'("CRM implementation" OR "workflow automation") ("request for proposal" OR "seeking implementation partner") -template -guide'},
- {source:'brave',region:'US',country:'US',language:'en',query:'"HubSpot" ("migration" OR "lead routing" OR "integration") "revenue operations" -template -guide -"all openings"'},
+ {source:'brave',region:'US',country:'US',language:'en',query:'CRM implementation RFP 2026 -template -guide'},
+ {source:'brave',region:'Europe',country:'GB',language:'en',query:'CRM implementation tender 2026 -template -guide'},
+ {source:'brave',region:'Australia',country:'AU',language:'en',query:'website redesign tender 2026 -template -guide'},
+ {source:'brave',region:'Asia',country:'SG',language:'en',query:'workflow automation tender 2026 -template -guide'},
+ {source:'brave',region:'US',country:'US',language:'en',query:'"HubSpot" "revenue operations" site:jobs.lever.co -"all openings"'},
 ]};

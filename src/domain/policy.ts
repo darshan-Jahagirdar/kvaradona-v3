@@ -15,7 +15,7 @@ export function discoveryPriority(candidate:{url:string;title:string;description
  const reportedOriginal=candidate.providerRecord?.finalUrl===candidate.url;
  const service=/\b(CRM|HubSpot|Salesforce|Zoho|workflow automation|website (?:redesign|development))\b/i.test(text);
  const request=/request for proposal|invites? (?:proposals|tenders|quotations)|seeking (?:an? |implementation )?partner|invitation to tender|\bRFP\b/i.test(text);
- return (service&&request?35:0)+(hostedJob||reportedOriginal?20:0)+(/\bHubSpot\b/i.test(text)?5:0)+(/revenue operations|lead routing|implementation|migration/i.test(text)?5:0)-(/\b(template|guide|how to|FAQ)\b|\bways to\b|all openings|\bJobs$/i.test(candidate.title)||/^(support|help)\./i.test(u.hostname)?80:0);
+ return (service&&request?35:0)+(hostedJob||reportedOriginal?20:0)+(/\bHubSpot\b/i.test(text)?5:0)+(/revenue operations|lead routing|implementation|migration/i.test(text)?5:0)-(/\b(template|guide|how to|FAQ)\b|\bways to\b|all openings|^what is\b|^revops 101\b|^\d+ questions to ask\b|\bJobs$/i.test(candidate.title)||/^(support|help)\./i.test(u.hostname)?80:0);
 }
 const normalized = (s: string) => s.replace(/\s+/g, ' ').trim();
 /** Repair formatting only when every quoted fragment occurs in order in the recorded source. */

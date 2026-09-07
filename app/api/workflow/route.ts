@@ -1,6 +1,8 @@
 import {NextResponse,type NextRequest} from 'next/server';
 import {z} from 'zod';
 import {userClient} from '../../../src/persistence/server';
+import {Packet} from '../../../src/contracts/pipeline';
+import {companyIdentity} from '../../../src/domain/opportunity-review';
 import {sameRequestOrigin} from '../../../src/domain/request-origin';
 const Command=z.object({organizationId:z.string().uuid(),requestKey:z.string().uuid()});
 export async function POST(req:NextRequest){
@@ -18,5 +20,6 @@ export async function GET(){
  const run=runs.data?.[0];
  const [jobs,opps]=run?await Promise.all([c.from('jobs').select('id,opportunity_id,stage,status,error').eq('campaign_id',run.campaign_id).order('created_at'),c.from('opportunities').select('id,state,packet').eq('campaign_id',run.campaign_id)]):[{data:[],error:null},{data:[],error:null}];
  if(jobs.error||opps.error)return NextResponse.json({error:'Workflow details unavailable'},{status:503});
- return NextResponse.json({run,worker:worker.data,budget:budget.data,jobs:jobs.data,opportunities:opps.data?.map(o=>({id:o.id,state:o.state,name:o.packet.research?.company??o.packet.candidate?.procurementNotice?.buyer??o.packet.candidate?.providerRecord?.company??o.packet.candidate?.title??'Source being checked'}))},{headers:{'Cache-Control':'no-store'}});
+ const companyKeys=new Set(opps.data?.flatMap(o=>{const p=Packet.safeParse(o.packet);const identity=p.success?companyIdentity(p.data):null;return identity?[identity.key]:[];}));
+ return NextResponse.json({run,companyCount:companyKeys.size,worker:worker.data,budget:budget.data,jobs:jobs.data,opportunities:opps.data?.map(o=>({id:o.id,state:o.state,name:o.packet.research?.company??o.packet.candidate?.procurementNotice?.buyer??o.packet.candidate?.providerRecord?.company??o.packet.candidate?.title??'Source being checked'}))},{headers:{'Cache-Control':'no-store'}});
 }
