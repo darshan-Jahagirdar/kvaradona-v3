@@ -3,6 +3,8 @@ import { getDomain } from 'tldts';
 import type { Packet, Research, Review } from '../contracts/pipeline';
 export const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export function hostOf(url: string) { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); }
+/** Boards that publish a structured employer identity, so a posting can attribute to the employer's own domain. */
+export const firstPartyATS=(host:string)=>/(^|\.)(ashbyhq\.com|greenhouse\.io|lever\.co)$/.test(host);
 export function identity(url: string) { const host = hostOf(url); return { host, registrableDomain: getDomain(host), verifiedAlias: false }; }
 export function eventKey(url: string) {
   const u = new URL(url); u.hash = '';
@@ -18,10 +20,10 @@ export function discoveryPriority(candidate:{url:string;title:string;description
  return (service&&request?35:0)+(hostedJob||reportedOriginal?20:0)+(/\bHubSpot\b/i.test(text)?5:0)+(/revenue operations|lead routing|implementation|migration/i.test(text)?5:0)-(/\b(template|guide|how to|FAQ)\b|\bways to\b|all openings|^what is\b|^revops 101\b|^\d+ questions to ask\b|\bJobs$/i.test(candidate.title)||/^(support|help)\./i.test(u.hostname)?80:0);
 }
 const normalized = (s: string) => s.replace(/\s+/g, ' ').trim();
-/** Repair formatting only when every quoted fragment occurs in order in the recorded source. */
+/** Repair formatting only when every quoted fragment, including ellipsis-elided parts, occurs in order in the recorded source. */
 export function sourceQuote(quote:string,text:string):string|null{
  const source=normalized(text),q=normalized(quote);if(!q)return null;if(source.includes(q))return q;
- const fragments=[...q.matchAll(/[“"]([^”"]+)[”"]/g)].map(m=>m[1]);
+ const fragments=[...q.matchAll(/[“"]([^”"]+)[”"]/g)].flatMap(m=>m[1].split(/\s*(?:\.{3,}|…)\s*/)).map(f=>f.trim()).filter(Boolean);
  const remainder=q.replace(/[“"]([^”"]+)[”"]/g,'').replace(/\band\b/g,'').replace(/[\s.,;]/g,'');
  if(!fragments.length||remainder)return null;let start=-1,end=0;
  for(const fragment of fragments){const i=source.indexOf(fragment,end);if(i<0)return null;if(start<0)start=i;end=i+fragment.length;}
