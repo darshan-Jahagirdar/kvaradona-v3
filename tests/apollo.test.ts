@@ -20,3 +20,10 @@ it('does not treat denied access or mismatched company results as a resolved con
   const h=harness([response]);const c=await h.resolver().resolve('fixture.invalid','Revenue Operations lead','Fixture Systems');expect(c.state).toBe('contact_pending');expect(c.email).toBeNull();expect(h.calls).toHaveLength(1);
  }
 });
+it('normalizes approved CMO and CEO titles before role relevance and seniority checks',async()=>{
+ for(const title of ['CMO','Chief Marketing Officer','CEO']){
+ const h=harness([{httpStatus:200,body:{people:[{...candidate,title}]}},{httpStatus:200,body:{person:{...person,title}}}]);
+ const result=await h.resolver().resolve('fixture.invalid',title==='CEO'?'CEO':'Marketing','Fixture Systems',true);
+ expect(result.state).toBe('resolved');expect(h.calls).toHaveLength(2);
+ }
+});

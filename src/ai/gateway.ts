@@ -5,7 +5,7 @@ import { required } from '../config/env';
 import { modelCost,money,usd,PRICE_VERSION,type Model } from '../usage/money';
 import type { OperationGateway } from '../usage/operations';
 import {imageDescriptor,type AIImage} from './images';
-export const roleModels={A1:'gpt-5.6-luna',A2:'gpt-5.6-terra',A3:'gpt-5.6-terra',A4:'gpt-5.6-luna',A5:'gpt-5.6-terra',A6:'gpt-5.6-luna'} as const;
+export const roleModels={A1:'gpt-5.6-terra',A2:'gpt-5.6-sol',A3:'gpt-5.6-sol',A4:'gpt-5.6-luna',A5:'gpt-5.6-sol',A6:'gpt-5.6-luna'} as const;
 export interface AILimits {maxOutputTokens:number;images?:AIImage[]}
 export interface AI { generate<T>(role:keyof typeof roleModels,key:string,schema:z.ZodType<T>,instructions:string,input:unknown,limits?:AILimits):Promise<T>; }
 const Result=z.object({status:z.string().nullable(),text:z.string(),model:z.string(),id:z.string()});

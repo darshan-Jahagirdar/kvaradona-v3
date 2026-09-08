@@ -1,12 +1,9 @@
-/** Exact user-approved target. Topic/industry IDs are intentionally unresolved. */
-export const intentIcp={
- version:9,employeeRange:{min:500,max:10000},
- countries:[{code:'IN',name:'India'},{code:'US',name:'United States'},{code:'GB',name:'United Kingdom'},{code:'AU',name:'Australia'},{code:'NZ',name:'New Zealand'},{code:'AE',name:'United Arab Emirates'},{code:'SG',name:'Singapore'}],
- buyerTitles:['CMO','VP Marketing','VP Sales','CEO','Operations','Sales Manager','Sales Head'],
- industries:['IT & Services','Construction','Marketing & Advertising','Real Estate','Healthcare','Consulting','Software','Consumer Services','Automotive','Education','Design','Hospitality'],
- intentTopics:['HubSpot','Monday.com','SEO','Website','CRM','Marketing Automation'],
-};
-export const intentSetup={ready:true,code:'intent_source_verified',reason:'Explorium/Bombora trial discovery and dated intent enrichment verified. Active pilot: Pardot.'} as const;
-export const intentWorkflowProfile={version:9,name:'Pardot intent · full ICP',sendingEnabled:false,maxResearch:4,maxCandidates:4,icp:intentIcp,activeIntentTopics:['media & advertising: pardot'],discoverySetup:intentSetup,groups:[{source:'explorium',region:'unspecified',country:'US',language:'en',page:1,query:''}]};
-/** Apollo company-only discovery stays disabled; verified intent has its own source. */
+import {intentIcp} from './intent-target';
+import {activeIntentTopics} from './intent-topics';
+import {exploriumSearchDefinition} from './explorium-icp';
+export {intentIcp} from './intent-target';
+export const intentSetup={ready:true,code:'intent_topics_configured',reason:'Six-topic intent search configured. First multi-topic live outcome remains unmeasured.'} as const;
+export const intentCoverage='Target: 500–10,000 employees inclusive. Current provider bands cover 501–10,000; exactly-500 companies need a separate verified route.';
+export const intentWorkflowProfile={version:10,name:'Six-topic intent · company research',sendingEnabled:false,maxResearch:4,maxCandidates:4,icp:intentIcp,activeIntentTopics,discoverySetup:intentSetup,coverage:intentCoverage,groups:[{source:'explorium',region:'unspecified',country:'US',language:'en',page:1,query:'',searchDefinition:exploriumSearchDefinition()}]};
+/** Apollo company-only discovery stays disabled; intent discovery has its own source. */
 export function requireIntentDiscovery(){throw new Error('apollo_intent_access_unverified');}

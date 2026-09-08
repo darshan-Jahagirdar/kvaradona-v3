@@ -13,7 +13,8 @@ export function contactTitles(role:string){
  if(/marketing|growth|conversion|seo|aeo/i.test(role))return ['marketing','growth','digital'];
  return [role.slice(0,120)];
 }
-function roleScore(title:string,role:string){const matches=contactTitles(role).some(t=>title.toLowerCase().includes(t.toLowerCase()));return matches?10+(/head|director|vp\b|vice president|chief|manager|lead/i.test(title)?10:0):0;}
+const expandRole=(value:string)=>value.replace(/\bCMO\b/gi,'Chief Marketing Officer').replace(/\bCEO\b/gi,'Chief Executive Officer').replace(/\bVP\b/gi,'Vice President');
+function roleScore(title:string,role:string){const expanded=expandRole(title);const matches=contactTitles(expandRole(role)).some(t=>expanded.toLowerCase().includes(t.toLowerCase()));return matches?10+(/head|director|vice president|chief|manager|lead/i.test(expanded)?10:0):0;}
 function httpReason(status:number){return status===401?'Apollo rejected the API key.':status===403?'Apollo denied this endpoint; key scope or account entitlement needs attention.':status===429?'Apollo rate limit reached; no immediate retry.':`Apollo returned HTTP ${status}; contact availability remains unknown.`;}
 export function intentBuyerTitle(title:string){return /\b(cmo|chief marketing officer|ceo|chief executive officer|operations|sales manager|sales head|head of sales|vp(?: of)? marketing|vice president(?: of)? marketing|vp(?: of)? sales|vice president(?: of)? sales)\b/i.test(title);}
 export interface FreeContactAllowance {remaining:number;expiresAt:string;evidence:string;verifiedFree:boolean;}

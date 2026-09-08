@@ -1,3 +1,4 @@
+import {matchedTopicProfiles} from './intent-topics';
 import type {ProviderCompany,DiscoveryGroup} from '../contracts/discovery';
 export const companyCountries:Record<string,string>={US:'United States',GB:'United Kingdom',AU:'Australia',SG:'Singapore'};
 export const companyIcp={employeeRanges:['1,500','501,10000'],regions:['US','Europe','Australia','Asia'],industries:null,revenue:null,exclusions:null};
@@ -10,6 +11,7 @@ export function assessCompany(employees:number|null,country:string|null,group:Di
 /** Evidence of a current need, not a technology mention. A named company makes a short quoted-name query
  *  viable, unlike the multi-clause discovery queries that returned nothing during calibration. */
 export function companyContextQuery(c:ProviderCompany){
- const name=c.name.replace(/["“”]/g,' ').replace(/\s+/g,' ').trim();
- return `"${name}" ("revenue operations" OR "marketing operations" OR "marketing automation" OR "CRM implementation")`;
+ const name=c.name.replace(/["“”]/g,' ').replace(/\s+/g,' ').trim().slice(0,100);
+ const profile=matchedTopicProfiles(c)[0];
+ return `"${name}" ${profile?.query??'("revenue operations" OR "marketing operations" OR "marketing automation" OR "CRM implementation")'}`;
 }

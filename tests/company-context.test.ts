@@ -1,3 +1,4 @@
+import {companyResearchContext} from '../src/domain/company-research';
 import {it,expect,vi} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {Packet} from '../src/contracts/pipeline';
@@ -26,10 +27,10 @@ it('admits an employer-attributed ATS posting and skips the homepage read',async
  expect(fetchEvidence).toHaveBeenCalledWith(url);
 });
 
-it('treats a deeper on-domain page as need evidence',async()=>{
+it('retains a deeper page without treating its path as proof of need',async()=>{
  const p=packet(),url='https://amesconstruction.com/news/marketing-operations-rebuild';
  const tools={search:vi.fn(async()=>[{url,title:'Marketing operations rebuild',description:'CRM implementation'} as any]),fetchEvidence:vi.fn(async()=>evidence(url,domain))};
- expect(await collectCompanyContext(p,tools)).toBe(true);expect(p.state).toBe('evidence_collected');
+ expect(await collectCompanyContext(p,tools)).toBe(true);expect(p.state).toBe('evidence_collected');expect(companyResearchContext(p).evidenceLimitations?.needAssessment).toBe('unconfirmed_until_original_evidence_review');
 });
 
 it('still researches a homepage-only company but marks the packet exploratory',async()=>{
@@ -40,7 +41,7 @@ it('still researches a homepage-only company but marks the packet exploratory',a
  expect(p.state).toBe('evidence_collected');
  expect(fetchEvidence).toHaveBeenCalledWith('https://'+domain);
  expect(p.evidence).toHaveLength(1);
- expect(p.notes.join(' ')).toContain('exploratory packet');
+ expect(p.notes.join(' ')).toContain('Need remains unconfirmed');
 });
 
 it('keeps a company with no readable source as an assessment candidate, not a rejection',async()=>{
