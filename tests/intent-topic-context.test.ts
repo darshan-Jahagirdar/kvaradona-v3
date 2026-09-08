@@ -24,7 +24,7 @@ it('maps all six families, keeps matching topic evidence, deduplicates overlappi
  const data={data:[{business_id:id,data:{business_id:id,company_website:domain,date_stamp:now.toISOString().slice(0,10).replaceAll('-',''),intent_topics:JSON.stringify([...activeIntentTopics.map(topic=>({topic,composite_score:72})),{topic:'unrelated: topic',composite_score:99}])}}]};
  expect(applyExploriumIntent(c,data,now).providerCompany!.intent.topics).toHaveLength(10);
  data.data[0].data.date_stamp='20250101';expect(applyExploriumIntent(c,data,now).providerCompany!.intent.status).toBe('unknown');
- for(const profile of intentTopicProfiles){const p=packet(profile.topics[0]);expect(companyContextQuery(p.candidate!.providerCompany!)).toContain(profile.query);}
+ for(const profile of intentTopicProfiles){const p=packet(profile.topics[0]);expect(companyContextQuery(p.candidate!.providerCompany!)).toBe(`site:example.com "${profile.terms[0]}"`);}
 });
 it('sends the frozen multi-topic definition to discovery and enrichment, filtering unrelated returned enrichment',async()=>{
  const definition=exploriumSearchDefinition(),requests:any[]=[];

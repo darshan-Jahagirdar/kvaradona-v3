@@ -8,10 +8,11 @@ export function assessCompany(employees:number|null,country:string|null,group:Di
  if(!country)unknowns.push('Headquarters country unavailable.');else if([group.country,companyCountries[group.country]].some(v=>v?.toLowerCase()===country.toLowerCase()))reasons.push('Reported headquarters matches this pilot country.');else unknowns.push('Reported headquarters differs from the requested country; assess operating geography before excluding.');
  return {status:mismatch?'mismatch' as const:employees===null||reasons.length<2?'unknown' as const:'match' as const,reasons,unknowns,searchCountry:group.country};
 }
-/** Evidence of a current need, not a technology mention. A named company makes a short quoted-name query
- *  viable, unlike the multi-clause discovery queries that returned nothing during calibration. */
-export function companyContextQuery(c:ProviderCompany){
+/** Short company-bound queries; fetched originals, not search matches, establish attribution. */
+export function companyContextQuery(c:ProviderCompany,alternate=false){
  const name=c.name.replace(/["“”]/g,' ').replace(/\s+/g,' ').trim().slice(0,100);
- const profile=matchedTopicProfiles(c)[0];
- return `"${name}" ${profile?.query??'("revenue operations" OR "marketing operations" OR "marketing automation" OR "CRM implementation")'}`;
+ const profiles=matchedTopicProfiles(c),profile=profiles[alternate&&profiles.length>1?1:0];
+ const term=profile?.terms[0]??'revenue operations';
+ // The alternate can find an employer-attributed ATS page outside the company domain.
+ return `${!alternate&&c.domain?'site:'+c.domain:`"${name}"`} "${term}"`;
 }

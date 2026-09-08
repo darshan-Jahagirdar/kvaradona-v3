@@ -38,6 +38,7 @@ export const Contact = z.object({ name: z.string().nullable(), role: z.string(),
 export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),searchCountry:z.string().optional(),language:z.string(),discoveredAt:z.string().datetime(),providerRecord:ProviderJob.optional(),providerCompany:ProviderCompany.optional(),procurementNotice:ProcurementNotice.optional()});
 export const Packet = z.object({
   candidate: Candidate.optional(),
+  contextAttempts:z.array(z.object({url:z.string().url(),stage:z.enum(['robots','page','attribution']),code:z.string().regex(/^[a-z0-9_]{1,80}$/i),status:z.number().int().optional()})).max(12).optional(),
   draftReplacement:z.object({operationId:z.string().uuid(),model:z.literal('gpt-5.6-terra'),reason:z.string().min(20).max(1000),requestedAt:z.string()}).optional(),
   draftCheckRequest:z.object({requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
   researchRequest:z.object({question:z.string().max(3000),requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
