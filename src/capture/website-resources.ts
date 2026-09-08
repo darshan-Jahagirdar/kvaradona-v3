@@ -2,7 +2,7 @@ import {safeRead} from './fetch';
 import {websiteLimits as limits} from './website-limits';
 
 type Response=Awaited<ReturnType<typeof safeRead>>;
-type Pending={url:string;kind:string;resolve:(value:Response)=>void;reject:(error:Error)=>void};
+type Pending={url:string;kind:string;contentBody?:string;resolve:(value:Response)=>void;reject:(error:Error)=>void};
 const priority=(kind:string)=>kind==='font'?1:kind==='image'?2:0;
 
 /** Reserve collection capacity for content, scripts and styles before optional assets. */
@@ -23,22 +23,23 @@ export function websiteResources(document:Response,robotsBytes:number,signal:Abo
    stats.requests++;active++;if(optional)optionalActive++;reservedBytes+=allowance;
    // Optional reads cannot occupy the four slots reserved for critical dependencies.
    const readSignal=optional?AbortSignal.any([signal,AbortSignal.timeout(limits.optionalMs)]):signal;
-   void safeRead(item.url,allowance,readSignal,optional?limits.optionalMs:30000).then(value=>{stats.bytes+=value.bytes.length;item.resolve(value);},item.reject).finally(()=>{active--;if(optional)optionalActive--;reservedBytes-=allowance;pump();});
+   void safeRead(item.url,allowance,readSignal,optional?limits.optionalMs:30000,'document',item.contentBody).then(value=>{stats.bytes+=value.bytes.length;item.resolve(value);},item.reject).finally(()=>{active--;if(optional)optionalActive--;reservedBytes-=allowance;pump();});
   }
  }
  signal.addEventListener('abort',()=>{for(const item of queue.splice(0))item.reject(Error('capture_deadline'));},{once:true});
  return {
   stats,skipped,
   get pending(){return active+queue.length;},
-  read(url:string,kind:string):Promise<Response>{
-   const saved=cache.get(url);if(saved)return saved;
+  read(url:string,kind:string,contentBody?:string):Promise<Response>{
+   const key=contentBody?url+'\n'+contentBody:url;
+   const saved=cache.get(key);if(saved)return saved;
    if(signal.aborted)return Promise.reject(Error('capture_deadline'));
    if(kind==='image'||kind==='font'){
     if(optionalCounts[kind]>=(kind==='image'?limits.images:limits.fonts)){skipped.add(`${kind}:${url}`);return Promise.reject(Error('capture_optional_limit'));}
     optionalCounts[kind]++;
    }
-   const result=new Promise<Response>((resolve,reject)=>queue.push({url,kind,resolve,reject}));
-   cache.set(url,result);pump();return result;
+   const result=new Promise<Response>((resolve,reject)=>queue.push({url,kind,contentBody,resolve,reject}));
+   cache.set(key,result);pump();return result;
   }
  };
 }

@@ -1,0 +1,3 @@
+-- Historical, temporary operational recovery window; already superseded.
+-- Exact live opportunity IDs and the applied statement are retained privately.
+-- No schema change is needed for a clean installation.

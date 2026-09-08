@@ -10,13 +10,18 @@ const Person=z.object({id:z.string(),name:z.string().nullable().optional(),title
 const normalize=(v:string)=>v.toLowerCase().replace(/[^a-z0-9]/g,'');
 export function contactTitles(role:string){
  if(/revenue|revops|crm|sales operations|business systems/i.test(role))return ['revenue operations','sales operations','business systems','CRM'];
- if(/marketing|growth|conversion|seo|aeo/i.test(role))return ['marketing','growth','digital'];
+ if(/marketing|growth|conversion|seo|aeo|digital|corporate web|website|web experience/i.test(role))return ['marketing','growth','digital'];
  return [role.slice(0,120)];
 }
-const expandRole=(value:string)=>value.replace(/\bCMO\b/gi,'Chief Marketing Officer').replace(/\bCEO\b/gi,'Chief Executive Officer').replace(/\bVP\b/gi,'Vice President');
+const expandRole=(value:string)=>value.replace(/\bCMO\b/gi,'Chief Marketing Officer').replace(/\bCEO\b/gi,'Chief Executive Officer').replace(/\bSVP\b/gi,'Senior Vice President').replace(/\bEVP\b/gi,'Executive Vice President').replace(/\bVP\b/gi,'Vice President');
 function roleScore(title:string,role:string){const expanded=expandRole(title);const matches=contactTitles(expandRole(role)).some(t=>expanded.toLowerCase().includes(t.toLowerCase()));return matches?10+(/head|director|vice president|chief|manager|lead/i.test(expanded)?10:0):0;}
 function httpReason(status:number){return status===401?'Apollo rejected the API key.':status===403?'Apollo denied this endpoint; key scope or account entitlement needs attention.':status===429?'Apollo rate limit reached; no immediate retry.':`Apollo returned HTTP ${status}; contact availability remains unknown.`;}
-export function intentBuyerTitle(title:string){return /\b(cmo|chief marketing officer|ceo|chief executive officer|operations|sales manager|sales head|head of sales|vp(?: of)? marketing|vice president(?: of)? marketing|vp(?: of)? sales|vice president(?: of)? sales)\b/i.test(title);}
+export function intentBuyerTitle(title:string){const t=expandRole(title).replace(/[,/&]+/g,' ');return /\b(chief marketing(?: and communications)? officer|chief executive officer|operations|sales manager|sales head|head of sales|vice president(?: of)? marketing|vice president(?: of)? sales)\b/i.test(t.replace(/\s+/g,' '));}
+function buyerSearchTitles(role:string,intentOnly:boolean){
+ if(!intentOnly)return contactTitles(role);
+ if(contactTitles(role).includes('marketing'))return ['marketing','digital','growth'];
+ return [...intentIcp.buyerTitles,'Chief Marketing Officer','Chief Executive Officer','Vice President Marketing','Vice President Sales','Head of Sales'];
+}
 export interface FreeContactAllowance {remaining:number;expiresAt:string;evidence:string;verifiedFree:boolean;}
 export type ContactOperations=Pick<OperationGateway,'run'>;
 export async function callApollo(operations:ContactOperations,request:typeof fetch,key:string,path:string,params:Record<string,string|string[]>,units:number){
@@ -30,18 +35,20 @@ export async function callApollo(operations:ContactOperations,request:typeof fet
   });
  }
 export class ApolloContacts {
- constructor(private operations:ContactOperations,private allowance:FreeContactAllowance|null,private request:typeof fetch=fetch){}
+ constructor(private operations:ContactOperations,private allowance:FreeContactAllowance|null,private request:typeof fetch=fetch,private savedSearch?:unknown){}
  private call(key:string,path:string,params:Record<string,string|string[]>,units:number){return callApollo(this.operations,this.request,key,path,params,units);}
 
  async resolve(host:string,role:string,company:string,intentIcpOnly=false):Promise<Contact>{
   if(!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host))throw new Error('invalid_account_domain');
   const pending=(reason:string,candidates:Contact['candidates']=[]):Contact=>({...contactPending(role,reason),source:'apollo',candidates});
+  const saved=Envelope.safeParse(this.savedSearch),savedPeople=saved.success&&saved.data.httpStatus===200?Search.safeParse(saved.data.body):null;
+  const reusable=savedPeople?.success&&savedPeople.data.people.some(p=>p.organization&&normalize(p.organization.name)===normalize(company)&&p.has_email&&isFresh(p.last_refreshed_at??null,90)&&roleScore(p.title??'',role)>=20&&(!intentIcpOnly||intentBuyerTitle(p.title??'')));
   let response;
-  try{response=await this.call('contact_search','mixed_people/api_search',{'q_organization_domains_list[]':[host],'person_titles[]':intentIcpOnly?[...intentIcp.buyerTitles,'Chief Marketing Officer','Chief Executive Officer','Vice President Marketing','Vice President Sales','Head of Sales']:contactTitles(role),include_similar_titles:'false',page:'1',per_page:'5'},0);}
+  try{response=reusable&&saved.success?saved.data:await this.call('contact_search','mixed_people/api_search',{'q_organization_domains_list[]':[host],'person_titles[]':buyerSearchTitles(role,intentIcpOnly),include_similar_titles:'true',page:'1',per_page:'25'},0);}
   catch(e){if(e instanceof Error&&/^(provider_unverified|live_disabled|budget_paused)$/.test(e.message))return pending('Apollo search is not enabled within the current verified limits.');throw e;}
   if(response.httpStatus!==200)return pending(httpReason(response.httpStatus));
   const parsed=Search.safeParse(response.body);if(!parsed.success)return pending('Apollo search returned an unrecognized response; no contact assumed.');
-  const candidates=parsed.data.people.filter(p=>p.organization&&normalize(p.organization.name)===normalize(company)&&roleScore(p.title??'',role)>0&&(!intentIcpOnly||intentBuyerTitle(p.title??''))).sort((a,b)=>roleScore(b.title??'',role)-roleScore(a.title??'',role)).slice(0,5).map(p=>({providerId:p.id,displayName:[p.first_name,p.last_name_obfuscated].filter(Boolean).join(' ')||'Name withheld',role:p.title??role,company:p.organization!.name,refreshedAt:p.last_refreshed_at??null,emailAvailable:p.has_email===true,reason:'Provider-reported role/company match. Partial name and email availability do not establish an address or verified current employment.'}));
+  const candidates=parsed.data.people.filter(p=>p.organization&&normalize(p.organization.name)===normalize(company)&&roleScore(p.title??'',role)>0&&(!intentIcpOnly||intentBuyerTitle(p.title??''))).sort((a,b)=>roleScore(b.title??'',role)-roleScore(a.title??'',role)||Number(b.has_email&&isFresh(b.last_refreshed_at??null,90))-Number(a.has_email&&isFresh(a.last_refreshed_at??null,90))).slice(0,5).map(p=>({providerId:p.id,displayName:[p.first_name,p.last_name_obfuscated].filter(Boolean).join(' ')||'Name withheld',role:p.title??role,company:p.organization!.name,refreshedAt:p.last_refreshed_at??null,emailAvailable:p.has_email===true,reason:'Provider-reported role/company match. Partial name and email availability do not establish an address or verified current employment.'}));
   if(!candidates.length)return pending(parsed.data.people.length?'Search results did not establish a matching current company and relevant role.':'No matching people returned in this bounded search; company potential remains unchanged.');
   const selected=candidates.find(c=>c.emailAvailable&&roleScore(c.role,role)>=20&&isFresh(c.refreshedAt,90));
   if(!selected)return pending('Candidates need a current relevant buyer role and sufficiently recent provider data before email enrichment.',candidates);

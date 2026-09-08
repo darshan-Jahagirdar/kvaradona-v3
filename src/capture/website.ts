@@ -5,6 +5,7 @@ import {launchResearchBrowser} from './specialists';
 import {websiteProbe} from './website-probe';
 import {selectWebsiteFacts} from './website-facts';
 import {websiteResources} from './website-resources';
+import {publicContentBody} from './public-content';
 import {websiteLimits as limits} from './website-limits';
 import {WebsiteCapture,type WebsiteFact} from '../contracts/website';
 import type {AIImage} from '../ai/images';
@@ -13,13 +14,14 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
  if(hostOf(url)!==expectedHost)throw Error('website_account_mismatch');
  const started=Date.now(),controller=new AbortController();
  const overall=AbortSignal.any([controller.signal,AbortSignal.timeout(limits.totalMs)]);
- const robots=await safeRead(new URL('/robots.txt',url).href,128000,overall);
+ const robots=await safeRead(new URL('/robots.txt',url).href,128000,overall,12000,'robots');
  if(robots.status===200&&!robotsAllows(robots.text,new URL(url).pathname))throw Error('robots_disallowed');
  if(robots.status===429||robots.status>=500)throw Error('robots_unavailable');
  const sourceDocument=await safeRead(url,limits.criticalBytes,overall,30000);
  if(sourceDocument.status!==200||!/html/.test(sourceDocument.contentType))throw Error('website_document_unavailable');
  if(hostOf(sourceDocument.url)!==expectedHost)throw Error('website_redirect_account_mismatch');
  const id=randomUUID(),images:AIImage[]=[],screenshots:WebsiteCapture['screenshots']=[],facts:WebsiteFact[]=[],limitations:string[]=[];
+ let renderedHtml:string|null=null;
  let criticalFailures=0,resourceFailures=0,stable=true,bodyUsable=true;
  const browser=await launchResearchBrowser();
  const resources=websiteResources(sourceDocument,robots.bytes.length,overall);
@@ -27,11 +29,13 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
  const deadline=setTimeout(()=>{controller.abort();void context.close().catch(()=>{});},Math.max(1,limits.totalMs-(Date.now()-started)));
  try{
   await context.route('**/*',async route=>{
-   const req=route.request(),kind=req.resourceType(),critical=['document','stylesheet','script'].includes(kind);
-   if(req.method()!=='GET'||!['document','stylesheet','image','font','script'].includes(kind))return route.abort().catch(()=>{});
+   const req=route.request(),kind=req.resourceType(),companyRead=['fetch','xhr'].includes(kind)&&new URL(req.url()).origin===new URL(sourceDocument.url).origin;
+   const contentBody=publicContentBody(req.url(),new URL(sourceDocument.url).origin,req.method(),req.postData());
+   const critical=['document','stylesheet','script'].includes(kind)||companyRead;
+   if(!contentBody&&(req.method()!=='GET'||!(['document','stylesheet','image','font','script'].includes(kind)||companyRead)))return route.abort().catch(()=>{});
    try{
     if(overall.aborted)throw Error('capture_deadline');
-    const r=await resources.read(req.url(),kind);if(r.status>=400){resourceFailures++;if(critical){criticalFailures++;limitations.push(`Critical ${kind} returned HTTP ${r.status}: ${new URL(req.url()).origin}${new URL(req.url()).pathname}`);}}
+    const r=await resources.read(req.url(),kind,contentBody);if(r.status>=400){resourceFailures++;if(critical){criticalFailures++;limitations.push(`Critical ${kind} returned HTTP ${r.status}: ${new URL(req.url()).origin}${new URL(req.url()).pathname}`);}}
     await route.fulfill({status:r.status,contentType:r.contentType,body:r.bytes});
    }catch(error){if(!(error instanceof Error&&error.message==='capture_optional_limit'))resourceFailures++;if(critical){criticalFailures++;const reason=error instanceof Error&&/^[a-z_]+$/.test(error.message)?error.message:'retrieval_failed';limitations.push(`Critical ${kind} ${reason}: ${new URL(req.url()).origin}${new URL(req.url()).pathname}`);}await route.abort().catch(()=>{});}
   });
@@ -59,6 +63,8 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
    }
    if(hash(first.facts)!==hash(last.facts)||!frame0.equals(png)){stable=false;limitations.push(`${viewport}: the render changed between samples. Do not classify animation or moving content as a defect.`);}
    if(last.bodyText.length<120||/just a moment|verify you are human|access denied/i.test(last.title))bodyUsable=false;
+   if(!last.facts.some(f=>f.category==='content'||f.id.includes('_heading_'))){bodyUsable=false;limitations.push(`${viewport}: no main-page passages or headings were recovered; metadata and dialog controls alone do not establish usable company content.`);}
+   if(!renderedHtml&&last.facts.some(f=>f.category==='content'&&f.viewport!=='page'))renderedHtml=await page.evaluate(()=>document.querySelector('main,[role=main]')?.outerHTML??document.body.outerHTML);
    facts.push(...last.facts);const dimensions=websiteViewports[viewport];
    images.push({id:viewport,png,...dimensions});screenshots.push({viewport,...dimensions,path:`${id}/${viewport}.png`,sha256:createHash('sha256').update(png).digest('hex'),bytes:png.length});
    if(viewport==='mobile'){
@@ -75,5 +81,5 @@ export async function captureWebsiteEvidence(url:string,expectedHost:string){
  if(!bodyUsable)limitations.push('Rendered content was insufficient, appeared to be an access challenge, or its resource queue did not settle.');
  const {facts:bounded,omitted}=selectWebsiteFacts(facts);
  if(omitted)limitations.push(`${omitted} additional DOM observations were omitted at the capture context limit; page metadata and viewport/category coverage were prioritized.`);
- return {capture:WebsiteCapture.parse({id,url,finalUrl:sourceDocument.url,accountHost:expectedHost,observedAt:new Date().toISOString(),version:'web-1',mode:'live',complete:bodyUsable&&criticalFailures===0,facts:bounded,screenshots,limitations,...resources.stats,elapsedMs:Date.now()-started,renderStable:stable}),images};
+ return {capture:WebsiteCapture.parse({id,url,finalUrl:sourceDocument.url,accountHost:expectedHost,observedAt:new Date().toISOString(),version:'web-1',mode:'live',complete:bodyUsable&&criticalFailures===0,facts:bounded,screenshots,limitations,...resources.stats,elapsedMs:Date.now()-started,renderStable:stable}),images,renderedHtml};
 }

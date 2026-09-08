@@ -7,6 +7,7 @@ import { hash,hostOf,firstPartyATS } from '../domain/policy';
 import type { Evidence } from '../contracts/pipeline';
 import {getDomain} from 'tldts';
 import {robotsAllows} from './robots';
+import {publicContentBody} from './public-content';
 import {SourceReadError,sourceFailure,type SourceAttempt} from './source-error';
 export {robotsAllows} from './robots';
 const blocked=new BlockList();
@@ -16,7 +17,8 @@ export async function publicUrl(input:string){
  const url=new URL(input);if(!['https:','http:'].includes(url.protocol)||url.username||url.password||(url.port&&!['80','443'].includes(url.port)))throw new Error('unsafe_url');
  const addresses=await lookup(url.hostname,{all:true});if(!addresses.length||addresses.some(a=>!publicAddress(a.address)))throw new Error('unsafe_destination');return {url,addresses};
 }
-export async function safeRead(input:string,limit=1000000,signal?:AbortSignal,timeoutMs=12000,kind:'document'|'robots'='document'){
+export async function safeRead(input:string,limit=1000000,signal?:AbortSignal,timeoutMs=12000,kind:'document'|'robots'='document',contentBody?:string){
+ if(contentBody&&!publicContentBody(input,new URL(input).origin,'POST',contentBody))throw Error('public_content_read_required');
  if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>30000)throw Error('invalid_read_timeout');
  let current=input;
  for(let i=0;i<4;i++){
@@ -24,9 +26,9 @@ export async function safeRead(input:string,limit=1000000,signal?:AbortSignal,ti
   // Pin the validated address through connect; DNS rebinding cannot reach a private destination.
   const agent=new Agent({connect:{lookup:(_hostname,_options,callback)=>callback(null,[pinned])}});
   try{
-   const response=await request(url,{dispatcher:agent,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs),headers:{'user-agent':'KvaradonaResearch/0.1 (+evidence review)','accept':'*/*'},headersTimeout:Math.min(30000,timeoutMs),bodyTimeout:Math.min(30000,timeoutMs)});
+   const response=await request(url,{method:contentBody?'POST':'GET',body:contentBody,dispatcher:agent,signal:signal?AbortSignal.any([signal,AbortSignal.timeout(timeoutMs)]):AbortSignal.timeout(timeoutMs),headers:{'user-agent':'KvaradonaResearch/0.1 (+evidence review)','accept':'*/*',...(contentBody?{'content-type':'application/json'}:{})},headersTimeout:Math.min(30000,timeoutMs),bodyTimeout:Math.min(30000,timeoutMs)});
    const discard=()=>{response.body.on('error',()=>{});response.body.destroy();};
-   if(response.statusCode>=300&&response.statusCode<400){const location=response.headers.location;discard();if(!location||Array.isArray(location))throw new Error('redirect_missing');current=new URL(location,url).toString();continue;}
+   if(response.statusCode>=300&&response.statusCode<400){const location=response.headers.location;discard();if(contentBody)throw Error('public_content_redirect');if(!location||Array.isArray(location))throw new Error('redirect_missing');current=new URL(location,url).toString();continue;}
    const contentType=String(response.headers['content-type']??'');
    if(kind==='robots'&&response.statusCode!==200){discard();return {url:url.href,status:response.statusCode,contentType,robotsHeader:'',text:'',bytes:Buffer.alloc(0)};}
    if(kind==='robots'&&/html/i.test(contentType)){discard();throw new SourceReadError({url:url.origin+url.pathname,stage:'robots',code:'robots_invalid_format',status:response.statusCode});}
@@ -57,7 +59,17 @@ export async function fetchEvidence(input:string,onAttempt?:(attempt:SourceAttem
  try{
   const r=await safeRead(u.href);if(r.status!==200)throw new SourceReadError({url:new URL(r.url).origin+new URL(r.url).pathname,stage:'page',code:`source_http_${r.status}`,status:r.status});
   if(!/html|text\/plain/.test(r.contentType))throw Error('source_format_not_supported');
-  const evidence=extractEvidence(input,r.url,r.text);onAttempt?.({url:new URL(r.url).origin+new URL(r.url).pathname,stage:'page',code:'ok',status:r.status});return evidence;
+  let evidence:Evidence;
+  try{evidence=extractEvidence(input,r.url,r.text);}
+  catch(error){
+   if(!(error instanceof Error)||error.message!=='source_text_insufficient')throw error;
+   const {captureWebsiteEvidence}=await import('./website');
+   const rendered=await captureWebsiteEvidence(r.url,hostOf(r.url));
+   if(!rendered.renderedHtml)throw Error('source_text_insufficient');
+   evidence={...extractEvidence(input,rendered.capture.finalUrl,rendered.renderedHtml),title:rendered.capture.facts.find(f=>f.id==='page_title')?.text??'',source:'original_web_rendered'};
+   onAttempt?.({url:new URL(r.url).origin+new URL(r.url).pathname,stage:'page',code:'rendered_context_recovered',status:200});
+  }
+  onAttempt?.({url:new URL(r.url).origin+new URL(r.url).pathname,stage:'page',code:'ok',status:r.status});return evidence;
  }catch(error){throw new SourceReadError(sourceFailure(error,u.href,'page'));}
 }
 const boardHost=(host:string)=>/(^|\.)(ashbyhq\.com|greenhouse\.io|lever\.co|jobleads\.com|bebee\.com|revopsroles\.com|linkedin\.com|indeed\.com)$/.test(host);

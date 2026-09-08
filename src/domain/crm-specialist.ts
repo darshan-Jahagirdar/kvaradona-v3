@@ -35,11 +35,12 @@ function crmClaims(p:Packet):Research{
  if(!p.research||!p.crmSupplement)throw Error('crm_analysis_missing');
  return {...p.research,claims:p.crmSupplement.analysis.findings.map(f=>({id:f.id,text:f.observation,kind:'fact' as const,evidenceId:f.evidenceId,quote:f.quote,material:true}))};
 }
-// Existing drafts need coverage only for specialist facts they actually cite.
+// The packet review checks all research; draft coverage applies to the claims used in that message.
 export function draftResearch(p:Packet,available=false):Research{
  if(!p.research)throw Error('research_missing');
  const extra=p.crmSupplement?crmClaims(p).claims.filter(c=>available||p.draft?.claimIds.includes(c.id)):[];
- return {...p.research,claims:[...p.research.claims,...extra,...websiteDraftClaims(p,available)]};
+ const base=available||!p.draft?p.research.claims:p.research.claims.filter(c=>p.draft!.claimIds.includes(c.id));
+ return {...p.research,claims:[...base,...extra,...websiteDraftClaims(p,available)]};
 }
 export function crmAnalysisProblems(p:Packet):string[]{
  if(!p.crmSupplement)return ['CRM analysis missing'];
