@@ -85,3 +85,8 @@ it('reuses saved original company context without fetching it again or buying an
  const p=packet();p.evidence=[evidence('https://'+domain+'/',domain)];const search=vi.fn(async()=>[]),fetchEvidence=vi.fn();
  expect(await collectCompanyContext(p,{search,fetchEvidence})).toBe(true);expect(p.evidence).toHaveLength(1);expect(search).toHaveBeenCalledTimes(1);expect(fetchEvidence).not.toHaveBeenCalled();
 });
+
+it('still uses a free original homepage when paid search is paused, without retrying the search',async()=>{
+ const p=packet(),search=vi.fn(async()=>{throw Error('budget_paused');}),fetchEvidence=vi.fn(async(u:string)=>evidence(u,domain));
+ expect(await collectCompanyContext(p,{search,fetchEvidence})).toBe(true);expect(search).toHaveBeenCalledTimes(1);expect(fetchEvidence).toHaveBeenCalledTimes(1);expect(p.evidence).toHaveLength(1);expect(p.notes.join(' ')).toContain('budget guard');
+});

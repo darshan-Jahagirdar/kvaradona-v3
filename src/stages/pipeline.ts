@@ -101,10 +101,14 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   const researchInput={procurementInstruction:procurement?`Prepare a response outline from this buyer's original procurement notice. accountHost must equal ${procurementIdentity(procurement)}; this is a buyer identifier, not the publishing website. Set specialist none and followUp null. Requirements, response route and supplier eligibility need exact source support; missing attachments remain missing, and this is not submission-ready.`:null,...context(p),reviewQuestion:p.researchRequest?.question??null,offer:p.candidate?.providerCompany?companyResearchContext(p).topicResearch?.offers:campaignProfile.offer,proof:[],instruction:'Use only original-source identity. A publication host is not necessarily the buyer. If identity cannot be attributed, keep it unresolved and request research. Propose at most one decision-changing follow-up query, or null. Keep excerpts short and verbatim. Include an attributable factual conversation anchor and one tentative useful offer. Assess the matched topic using original evidence; do not force a CRM offer for SEO or website research. Separate observed facts, the service hypothesis, contrary evidence and unknowns. Priority requires a supported relevant initiative or explicit need; use exploration for a credible service fit with an attributable fact and useful conditional offer. Missing public proof of intent alone does not require watch or disqualification.'};
   p.research=await tools.ai.generate('A2','research',Research,common,researchInput);
   if(p.research.followUp&&!procurement){
-   const q=p.research.followUp;const results=await tools.search('followup',q.query,p.candidate?.country,p.candidate?.language);
-   const candidate=results.find(c=>!p.evidence.some(e=>eventKey(e.url)===c.eventKey)&&hostOf(c.url)===p.research?.accountHost);
-   if(candidate&&p.evidence.length<6){try{p.evidence.push(await tools.fetchEvidence(candidate.url));}catch{p.notes.push('Follow-up original source was unavailable.');}}
-   p.research=await tools.ai.generate('A2','research_final',Research,common,{...researchInput,...context(p),prior:p.research,instruction:'Finalize using available evidence. No further tool cycle is allowed: set followUp to null.'});
+   const q=p.research.followUp;let results:z.infer<typeof Candidate>[]=[];
+   try{results=await tools.search('followup',q.query,p.candidate?.country,p.candidate?.language);}
+   catch(error){if(!(error instanceof Error)||error.message!=='budget_paused')throw error;p.notes.push('Follow-up search paused by its budget guard; no additional evidence was obtained.');}
+   const seen=new Set(p.evidence.flatMap(e=>[eventKey(e.url),eventKey(e.finalUrl)]));
+   const candidate=results.find(c=>!seen.has(eventKey(c.url))&&hostOf(c.url)===p.research?.accountHost);let added=false;
+   if(candidate&&p.evidence.length<6){try{const e=await tools.fetchEvidence(candidate.url);if(e.origin==='original'&&e.accountHost===p.research.accountHost&&!seen.has(eventKey(e.finalUrl))){p.evidence.push(e);added=true;}}catch{p.notes.push('Follow-up original source was unavailable.');}}
+   if(added)p.research=await tools.ai.generate('A2','research_final',Research,common,{...researchInput,...context(p),prior:p.research,instruction:'Finalize using available evidence. No further tool cycle is allowed: set followUp to null.'});
+   else{p.research={...p.research,followUp:null};p.notes.push('Follow-up added no new attributable original evidence; reused the saved A2 assessment without another model call.');}
   }
   p.research=repairCitations(p.research,p);
   const errors=validateResearch(p.research,p);p.notes.push(...errors);

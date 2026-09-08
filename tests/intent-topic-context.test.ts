@@ -10,6 +10,7 @@ import {companyResearchContext} from '../src/domain/company-research';
 import {draftReviewContext} from '../src/domain/review-context';
 import {collectCompanyContext} from '../src/stages/company-context';
 import {runStage,type StageTools} from '../src/stages/pipeline';
+import {eventKey} from '../src/domain/policy';
 const now=new Date(),id='b'.repeat(32),domain='example.com';
 const raw=(topics=activeIntentTopics)=>({business_id:id,name:'Example Company',domain,country_name:'united states',number_of_employees_range:'501-1000',naics_description:'Software',business_intent_topics:topics.map(topic=>({topic,score:80}))});
 const candidate=()=>exploriumCandidates({data:[raw()]}).candidates[0];
@@ -56,4 +57,18 @@ it('does not buy duplicate intent enrichment for an existing company',async()=>{
  const ops={run:vi.fn(async()=>({httpStatus:200,body:{data:[raw()],credit_usage:{total_credits:2}}}))} as any;
  const result=await searchExploriumCompanies(ops,'fixture',DiscoveryGroup.parse({country:'US',language:'en',source:'explorium'}),fetch,async candidates=>new Set(candidates.map(c=>c.eventKey)));
  expect(ops.run).toHaveBeenCalledOnce();expect(result.providerResult.reused).toBe(1);expect(result.providerResult.enriched).toBe(0);expect(result.candidates).toHaveLength(1);
+});
+
+it('reuses A2 when follow-up returns an already-read final URL, fails, or redirects to saved evidence',async()=>{
+ for(const kind of ['final_url','failed','redirect','budget','new_source']){
+  const p=packet(),e=evidence('/','Example Company operates this website.');e.finalUrl='https://www.example.com/';p.evidence=[e];
+  const research={company:'Example Company',accountHost:domain,identityBasis:'Original company page',service:'Website',demand:'plausible',whyNow:'Unknown',offer:'Conditional website assessment',buyerRole:'Marketing lead',claims:[{id:'c1',text:e.text,quote:e.text,evidenceId:e.id,kind:'fact',material:true}],contrary:[],uncertainties:['No confirmed project'],decision:'exploration',reason:'Attributable company context',watchTrigger:null,specialist:'none',specialistReason:'No measured defect',followUp:{query:'Example website project',question:'Is there a project?',decisionImpact:'Priority if confirmed'}};
+  const url=kind==='final_url'?e.finalUrl:'https://example.com/new';
+  const fetchEvidence=vi.fn(async()=>{if(kind==='failed')throw Error('source_http_403');return kind==='new_source'?evidence('/new','Company news about its website.'):e;});
+  const generate=vi.fn(async()=>({...research,followUp:generate.mock.calls.length>1?null:research.followUp}));let output:any;
+  const store={rpc:vi.fn(async(_name:string,args:any)=>{output=args.p_output;return true;})};
+  await runStage(store,{stage:'S06',payload:p,input_version:1,opportunity_id:randomUUID()} as Job,{ai:{generate},search:async()=>{if(kind==='budget')throw Error('budget_paused');return [{url,eventKey:eventKey(url)}];},fetchEvidence} as unknown as StageTools);
+  expect(generate).toHaveBeenCalledTimes(kind==='new_source'?2:1);expect(output.evidence).toHaveLength(kind==='new_source'?2:1);expect(output.research.followUp).toBeNull();
+  if(kind==='final_url')expect(fetchEvidence).not.toHaveBeenCalled();
+ }
 });

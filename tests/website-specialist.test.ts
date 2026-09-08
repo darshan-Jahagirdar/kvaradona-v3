@@ -16,6 +16,15 @@ function harness(capture:WebsiteCapture,analysis:WebsiteAnalysis){
  const tools:WebsiteTools={websiteCapture:async()=>{captures++;return capture;},websiteImages:async()=>[],ai:{async generate(role,_key,schema,_instructions,input){calls.push(role);return schema.parse(role==='A3'?analysis:{inputHash:(input as {inputHash:string}).inputHash,acceptable:true,issues:[],verdicts:analysis.findings.map(f=>({findingId:f.id,observationIds:f.observationIds,verdict:'supported_hypothesis',reason:''}))});}}};
  return {tools,calls,captures:()=>captures};
 }
+it('uses a successfully attributed canonical origin for an automatic audit and preserves explicit URLs',async()=>{
+ for(const explicit of [false,true]){
+  const {p,capture,analysis}=fixture(),h=harness(capture,analysis);let read='';
+  p.evidence=[{id:randomUUID(),url:'https://fixture.invalid/news',finalUrl:'https://www.fixture.invalid/news',accountHost:'fixture.invalid',origin:'original',source:'original_web',text:'Company news',title:'News',contentHash:'fixture',retrievedAt:new Date().toISOString(),publishedAt:null,status:'unknown'}];
+  if(!explicit)delete p.websiteRequest;
+  await websiteSpecialistStep(p,{...h.tools,websiteCapture:async url=>{read=url;return capture;}});
+  expect(read).toBe(explicit?'https://fixture.invalid/':'https://www.fixture.invalid');
+ }
+});
 it('checkpoints shared capture, analysis and review separately and reuses exact saved results',async()=>{
  const {p,capture,analysis}=fixture(),h=harness(capture,analysis),draft=structuredClone(p.draft);
  expect(await websiteSpecialistStep(p,h.tools)).toBe('S08');expect(h.calls).toEqual([]);expect(p.websiteSupplement?.analysis).toBeUndefined();

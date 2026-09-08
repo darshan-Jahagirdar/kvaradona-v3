@@ -31,7 +31,9 @@ export async function collectCompanyContext(p:Packet,tools:CompanyContextTools):
  const rank=(r:z.infer<typeof Candidate>)=>topicRelevance(r.title+' '+r.description,c)*30+(/implementation|migration|rollout|initiative|project|launch|hiring|integration|redesign/i.test(r.title+' '+r.description)?10:0)+(firstPartyATS(hostOf(r.url))?5:0);
  for(const alternate of [false,true]){
   if(alternate&&p.evidence.length)break;
-  const results=await tools.search('company_context_v2_'+(alternate?'alternate':'primary'),companyContextQuery(c,alternate),p.candidate!.country,p.candidate!.language);
+  let results:z.infer<typeof Candidate>[];
+  try{results=await tools.search('company_context_v2_'+(alternate?'alternate':'primary'),companyContextQuery(c,alternate),p.candidate!.country,p.candidate!.language);}
+  catch(error){if(!(error instanceof Error)||error.message!=='budget_paused')throw error;p.notes.push('Paid context search paused by its budget guard; use saved evidence or the bounded company homepage read.');break;}
   const ranked=results.filter(r=>{try{const h=hostOf(r.url);return (owned(h)||firstPartyATS(h))&&discoveryPriority(r)>=0&&!seen.has(eventKey(r.url));}catch{return false;}}).sort((a,b)=>rank(b)-rank(a));
   // Keep capacity for a changed query or the company homepage if the first page fails.
   if(ranked[0])await read(ranked[0].url);
