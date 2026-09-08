@@ -4,10 +4,10 @@ import {randomUUID} from 'node:crypto';
 import {testDatabase,seed,localStore,org,user,otherOrg,campaign,enqueue} from './database';
 import {Job} from '../src/contracts/pipeline';
 import {intentWorkflowProfile} from '../src/domain/intent-icp';
-const migration='supabase/migrations/20260908072105_intent_topics_context_accounting.sql';
+const migration='supabase/migrations/20260908081150_three_dollar_501_intent_test.sql';
 async function setup(){
  const db=await testDatabase();await seed(db);
- for(const file of ['20260906131530_two_dollar_cap_and_bounded_draft_replacement.sql','20260906154157_complementary_discovery.sql','20260907133534_review_workflow.sql','20260907143733_apollo_company_discovery.sql','20260907150818_intent_icp_gate.sql','20260907162737_explorium_intent_discovery.sql','20260907174500_research_four_per_run.sql'])await db.exec(await readFile('supabase/migrations/'+file,'utf8'));
+ for(const file of ['20260906131530_two_dollar_cap_and_bounded_draft_replacement.sql','20260906154157_complementary_discovery.sql','20260907133534_review_workflow.sql','20260907143733_apollo_company_discovery.sql','20260907150818_intent_icp_gate.sql','20260907162737_explorium_intent_discovery.sql','20260907174500_research_four_per_run.sql','20260908072105_intent_topics_context_accounting.sql'])await db.exec(await readFile('supabase/migrations/'+file,'utf8'));
  const prior=(await db.query<{profile:any}>("select profile from public.workflow_profiles where id='focused-v1'")).rows[0].profile;
  await db.exec(await readFile(migration,'utf8'));
  const jid=await enqueue(db);await db.exec("update public.jobs set status='done';update public.budget set live_enabled=true,limit_usd=2;update public.provider_limits set limit_usd=2,verified_at=now(),expires_at=now()+interval '1 hour',probe_enabled=true,free_units=100,evidence=jsonb_build_object('kind','verified_trial','trialValidUntil',now()+interval '1 day')::text where provider in('openai','brave','explorium','apollo')");
@@ -34,9 +34,9 @@ it('uses only identical ingested search definitions for cursor continuation, kee
  await login(db);await expect(store.rpc('start_workflow',{p_organization:org,p_request:randomUUID()})).rejects.toThrow('intent_search_exhausted');await db.exec('reset role');
  await db.exec("update public.jobs set status='done';update public.workflow_profiles set profile=jsonb_set(profile,'{groups,0,searchDefinition,pageSize}','3') where id='focused-v1'");
  await login(db);await store.rpc('start_workflow',{p_organization:org,p_request:randomUUID()});await db.exec('reset role');payload=(await db.query<{payload:any}>("select payload from public.jobs where status='queued'")).rows[0].payload;expect(payload.groups[0].nextCursor).toBeUndefined();
- const tables=['opportunities','jobs','company_discovery_observations','provider_operations','budget','provider_limits'];
+ const tables=['opportunities','jobs','company_discovery_observations','provider_operations'];
  const snapshot=async()=>Object.fromEntries(await Promise.all(tables.map(async t=>[t,(await db.query(`select to_jsonb(t) row from public.${t} t order by to_jsonb(t)::text`)).rows])));
- const before=await snapshot();await db.exec(await readFile('supabase/recovery/015_intent_topics_context_accounting.sql','utf8'));expect(await snapshot()).toEqual(before);expect((await db.query<{profile:any}>("select profile from public.workflow_profiles where id='focused-v1'")).rows[0].profile).toEqual(prior);
+ const before=await snapshot();await db.exec(await readFile('supabase/recovery/016_three_dollar_501_intent_test.sql','utf8'));expect(await snapshot()).toEqual(before);expect((await db.query<{profile:any}>("select profile from public.workflow_profiles where id='focused-v1'")).rows[0].profile).toEqual(prior);
  }finally{await db.close();}
 });
 it('settles confirmed empty/partial pages consistently in reservations and launches while preserving reservation history and other providers',async()=>{
@@ -60,5 +60,23 @@ it('holds unknown, ambiguous, malformed, inconsistent and excess charges at both
  await db.exec("update public.jobs set status='done'");await login(db);await expect(store.rpc('start_workflow',{p_organization:org,p_request:randomUUID()})).rejects.toThrow('explorium_credit_accounting_hold');await db.exec('reset role');
  await db.query("update public.jobs set status='running',lease_until=now()+interval '5 minutes' where id=$1",[job.id]);await db.query('delete from public.provider_operations where id=$1',[id]);
  }
+ }finally{await db.close();}
+});
+
+it('raises the cumulative ceiling to three dollars without releasing holds or changing provider credits, and refuses unsafe recovery',async()=>{
+ const {db,store,jid}=await setup();try{
+ await db.exec(await readFile('supabase/recovery/016_three_dollar_501_intent_test.sql','utf8'));
+ await db.query("insert into public.provider_operations(organization_id,job_id,campaign_id,operation_key,provider,request_hash,state,reserved_usd,actual_usd,units) values($1,$2,$3,'saved-hold','openai','h','ambiguous',0.10,null,0)",[org,jid,campaign]);
+ const ops=(await db.query('select * from public.provider_operations order by id')).rows,limits=(await db.query("select provider,free_units,expires_at from public.provider_limits order by provider")).rows;
+ await db.exec(await readFile(migration,'utf8'));
+ expect((await db.query('select * from public.provider_operations order by id')).rows).toEqual(ops);
+ expect((await db.query('select provider,free_units,expires_at from public.provider_limits order by provider')).rows).toEqual(limits);
+ expect((await db.query<{cap:string}>('select limit_usd::text cap from public.budget')).rows[0].cap).toBe('3.00000000');
+ await expect(db.exec('update public.budget set limit_usd=3.01')).rejects.toThrow('budget_limit_usd_check');
+ await db.query("update public.provider_operations set actual_usd=2.40,reserved_usd=2.40 where operation_key='openai'");
+ await login(db);await expect(store.rpc('start_workflow',{p_organization:org,p_request:randomUUID()})).resolves.toHaveProperty('created',true);await db.exec('reset role');
+ await expect(db.exec(await readFile('supabase/recovery/016_three_dollar_501_intent_test.sql','utf8'))).rejects.toThrow('recovery_cap_below_preserved_commitments');await db.exec('rollback');
+ await db.exec("update public.jobs set status='done';update public.provider_operations set reserved_usd=0.59 where operation_key='saved-hold'");
+ await login(db);await expect(store.rpc('start_workflow',{p_organization:org,p_request:randomUUID()})).rejects.toThrow('budget_paused');await db.exec('reset role');
  }finally{await db.close();}
 });

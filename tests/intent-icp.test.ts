@@ -4,7 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {intentIcp,intentWorkflowProfile,requireIntentDiscovery} from '../src/domain/intent-icp';
 import {testDatabase,seed,localStore,org,user,otherOrg} from './database';
 it('keeps the exact corrected ICP and holds discovery instead of inventing topic or industry IDs',()=>{
- expect(intentIcp.employeeRange).toEqual({min:500,max:10000});expect(intentIcp.countries.map(c=>c.code)).toEqual(['IN','US','GB','AU','NZ','AE','SG']);expect(intentIcp.industries).toHaveLength(12);expect(intentIcp.buyerTitles).toHaveLength(7);expect(intentIcp.intentTopics).toEqual(['HubSpot','Monday.com','SEO','Website','CRM','Marketing Automation']);expect(()=>requireIntentDiscovery()).toThrow('apollo_intent_access_unverified');
+ expect(intentIcp.employeeRange).toEqual({min:501,max:10000});expect(intentIcp.countries.map(c=>c.code)).toEqual(['IN','US','GB','AU','NZ','AE','SG']);expect(intentIcp.industries).toHaveLength(12);expect(intentIcp.buyerTitles).toHaveLength(7);expect(intentIcp.intentTopics).toEqual(['HubSpot','Monday.com','SEO','Website','CRM','Marketing Automation']);expect(()=>requireIntentDiscovery()).toThrow('apollo_intent_access_unverified');
 });
 it('holds authenticated new launches before mutating runs, jobs, provider windows or budgets, preserves existing requests and tests recovery',async()=>{
  const db=await testDatabase();try{
