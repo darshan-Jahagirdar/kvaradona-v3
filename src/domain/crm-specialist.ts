@@ -19,7 +19,7 @@ export function crmContext(p:Packet){
    }
    return {id:e.id,url:e.finalUrl,title:e.title,publishedAt:e.publishedAt,retrievedAt:e.retrievedAt,status:e.status,text:excerpts.join('\n[Source excerpt]\n')};
   });
- return {company:r.company,service:r.service,question:r.specialistReason,contrary:r.contrary,uncertainties:r.uncertainties,evidence};
+ return {company:r.company,service:r.service,question:`Assess ${r.service} using original evidence. Provider topic rankings and research routing are not original-source findings.`,contrary:r.contrary,uncertainties:r.uncertainties,evidence};
 }
 export function crmReviewTarget(p:Packet){return JSON.stringify({inputHash:p.crmSupplement?.inputHash,analysis:p.crmSupplement?.analysis});}
 export function repairCrmCitations(p:Packet){
