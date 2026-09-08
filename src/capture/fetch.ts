@@ -57,7 +57,8 @@ export async function fetchEvidence(input:string,onAttempt?:(attempt:SourceAttem
   }
  }
  try{
-  const r=await safeRead(u.href);if(r.status!==200)throw new SourceReadError({url:new URL(r.url).origin+new URL(r.url).pathname,stage:'page',code:`source_http_${r.status}`,status:r.status});
+  let r;try{r=await safeRead(u.href);}catch(error){if(!(error instanceof Error)||error.message!=='document_size_limit')throw error;onAttempt?.({url:u.href,stage:'page',code:'retry_larger_document'});r=await safeRead(u.href,4000000,undefined,30000);}
+  if(r.status!==200)throw new SourceReadError({url:new URL(r.url).origin+new URL(r.url).pathname,stage:'page',code:`source_http_${r.status}`,status:r.status});
   if(!/html|text\/plain/.test(r.contentType))throw Error('source_format_not_supported');
   let evidence:Evidence;
   try{evidence=extractEvidence(input,r.url,r.text);}

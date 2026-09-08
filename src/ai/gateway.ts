@@ -15,7 +15,7 @@ export class OpenAIGateway implements AI {
   const images=limits?.images??[];if(images.length>2||(images.length&&!['A3','A5'].includes(role)))throw Error('image_role_or_count_limit');
   const descriptors=images.map(imageDescriptor);
   const model:Model=images.length&&role==='A3'?'gpt-5.6-sol':role==='A4'&&this.draftModel?this.draftModel:roleModels[role];const format=modelTextFormat(schema,key.replace(/[^a-z0-9_]/gi,'_'));
-  const content=JSON.stringify(input);if(Buffer.byteLength(content)>(role==='A5'?96000:24000))throw new Error('model_input_limit');
+  const content=JSON.stringify(input);if(Buffer.byteLength(content)>(['A2','A3','A4','A5'].includes(role)?96000:24000))throw new Error('model_input_limit');
   const maxOutput=z.number().int().min(256).max(2048).parse(limits?.maxOutputTokens??2048);
   const params={model,instructions,input:content,text:{format},max_output_tokens:maxOutput,reasoning:{effort:'low' as const},service_tier:'default' as const,store:false};
   // UTF-8 byte count plus protocol margin is a deliberately conservative text-token ceiling.

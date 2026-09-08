@@ -3,8 +3,9 @@ export type WorkflowStatus={setup?:{ready:boolean;reason:string};companyCount?:n
 export function workflowSummary(s:WorkflowStatus){
  const running=s.jobs.filter(j=>j.status==='running'),queued=s.jobs.filter(j=>j.status==='queued'),failed=s.jobs.filter(j=>['blocked','failed'].includes(j.status));
  const budgetPaused=s.budget.live_enabled===false||failed.some(j=>/quota/.test(j.error??'')||(s.budget.dollar_limits_enabled!==false&&/budget/.test(j.error??'')));
- const phase=!s.run?'Ready to start':!s.worker.online&&(running.length||queued.length)?'Waiting for laptop worker':running.length?'Running':queued.length?'Queued':budgetPaused?'Paused by budget':failed.length?'Finished with issues':'Finished';
- return {phase,active:Boolean(running.length||queued.length),running,queued,failed,finished:s.jobs.filter(j=>j.status==='done').length};
+ const attention=s.opportunities.filter(o=>/pending|exception|repair|requested|weak_context|review_required/.test(o.state));
+ const phase=!s.run?'Ready to start':!s.worker.online&&(running.length||queued.length)?'Waiting for laptop worker':running.length?'Running':queued.length?'Queued':budgetPaused?'Paused by budget':failed.length||attention.length?'Needs attention':'Finished';
+ return {phase,active:Boolean(running.length||queued.length),attention,running,queued,failed,finished:s.jobs.filter(j=>j.status==='done').length};
 }
 export function failureMessage(reason:string|null){
  if(/budget/.test(reason??''))return 'Budget limit reached. Completed work and unresolved reservations are preserved.';
