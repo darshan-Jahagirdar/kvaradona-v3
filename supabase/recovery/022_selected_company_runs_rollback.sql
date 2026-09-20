@@ -1,4 +1,5 @@
--- Recovery for 20260920090000_selected_company_runs.sql.
+-- Recovery for supabase/migrations/20260920115456_selected_company_runs.sql
+-- (recorded by Supabase as version 20260920115456).
 --
 -- Runs as one transaction: either the whole recovery applies or nothing does.
 --

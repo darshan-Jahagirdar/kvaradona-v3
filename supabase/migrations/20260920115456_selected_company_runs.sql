@@ -1,5 +1,11 @@
 -- Selected-company runs: a normal Run Workflow over chosen accounts in an existing campaign.
 --
+-- APPLIED to project zosoeeamvpfendsphnjn and recorded by Supabase as version 20260920115456.
+-- The business SQL below is byte-identical to what was applied (sha256
+-- 8cb49596283e0d639ad39d65e530640a62082fd4e0ab6279ef254f9e4626abd4). Do not apply it again; the
+-- migration history belongs to Supabase. To reverse it, use
+-- supabase/recovery/022_selected_company_runs_rollback.sql.
+--
 -- THIS IS NOT AN ADDITIVE-ONLY CHANGE. It:
 --   * DROPS the workflow_runs.campaign_id UNIQUE constraint and replaces it with a partial unique
 --     index, so a campaign may hold one discovery run plus any number of selected runs over time;
