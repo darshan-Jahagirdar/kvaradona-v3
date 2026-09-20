@@ -22,11 +22,26 @@ it('preserves missing ICP/domain fields, separates mismatches, and fails clearly
  for(const [status,body,error]of [[403,{},'access_denied'],[429,{},'rate_limited'],[200,{accounts:[]},'response_invalid'],[200,{organizations:[{id:'broken'}]},'records_invalid']] as const){const op=ops(body,status);await expect(searchApolloCompanies(op,'company_discovery',group)).rejects.toThrow(error);expect(op.run).toHaveBeenCalledTimes(1);}
 });
 it('researches only company pages, retains original attribution failures, and reuses fresh saved evidence',async()=>{
- const p=Packet.parse({candidate:await candidate(),state:'discovered',evidence:[],mode:'fixture'}),now=new Date().toISOString();
+ // This test is about source attribution, so the company sits inside the researched employee range.
+ // A company below it is correctly stopped earlier by fact resolution as an ICP mismatch.
+ // An explicitly accepted cohort, as a selected-company run supplies, so this test exercises source
+ // attribution rather than the eligibility gate that correctly precedes it.
+ const p=Packet.parse({candidate:await candidate({...company,estimated_num_employees:1200}),state:'discovered',evidence:[],mode:'fixture',
+  eligibility:{basis:'user_accepted_cohort',cohort:'attribution fixture',acceptedNote:'Accepted for this source-attribution fixture.',
+   employeeRange:{min:200},countries:['United States']}}),now=new Date().toISOString();
  const evidence={id:randomUUID(),url:p.candidate!.url,finalUrl:p.candidate!.url,title:'Company initiative',text:'Fixture evidence',contentHash:'fixture',retrievedAt:now,publishedAt:null,source:'website',origin:'original' as const,status:'unknown' as const,accountHost:'fixture-a.example.com'};
  const tools={search:vi.fn(async()=>[{...p.candidate!,url:'https://unrelated.example.com/claim'}]),fetchEvidence:vi.fn(async()=>({...evidence,accountHost:'unrelated.example.com'}))};
- expect(await collectCompanyContext(p,tools)).toBe(false);expect(p.state).toBe('company_context_pending');expect(tools.search.mock.calls).toHaveLength(1);expect(tools.fetchEvidence).toHaveBeenCalledWith('https://fixture-a.example.com');
- tools.search.mockClear();expect(await collectCompanyContext(p,{...tools,companyEvidence:async()=>[evidence]})).toBe(true);expect(tools.search).not.toHaveBeenCalled();expect(p.evidence[0].id).not.toBe(evidence.id);expect(p.evidence[0].retrievedAt).toBe(now);
+ expect(await collectCompanyContext(p,tools)).toBe(false);expect(p.state).toBe('company_context_pending');expect(tools.search.mock.calls.length).toBeLessThanOrEqual(3);expect(tools.fetchEvidence).toHaveBeenCalledWith('https://fixture-a.example.com',expect.any(Function));
+ tools.search.mockClear();tools.fetchEvidence.mockClear();
+ expect(await collectCompanyContext(p,{...tools,companyEvidence:async()=>[evidence]})).toBe(true);
+ // Saved company evidence is adopted as a NEW record keeping the original retrieval time, and that
+ // exact page is never fetched again. Generic saved material no longer ends retrieval on its own,
+ // so the bounded plan may still run: a keyword on a landing page is not adequate context.
+ const adopted=p.evidence.find(e=>e.retrievedAt===now);
+ expect(adopted).toBeDefined();
+ expect(adopted!.id).not.toBe(evidence.id);
+ expect(tools.fetchEvidence.mock.calls.map(c=>(c as unknown[])[0])).not.toContain(evidence.finalUrl);
+ expect(tools.search.mock.calls.length).toBeLessThanOrEqual(3);
 });
 it('holds obsolete company-only discovery before any provider call or ingestion',async()=>{
  const {runStage}=await import('../src/stages/pipeline');const records=await Promise.all(['a','b','c','d','e'].map(id=>candidate({...company,id}))),rpc=vi.fn(async(_name:string,_args:Record<string,unknown>)=>true),search=vi.fn(async()=>[]);

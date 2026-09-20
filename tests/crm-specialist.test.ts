@@ -40,10 +40,19 @@ it('repairs quote wrappers on saved analysis without repeating A3 and exposes on
  result.output.draft!.claimIds.push('crm1');expect(draftResearch(result.output).claims.map(c=>c.id)).toEqual(['c1','crm1']);
 });
 it('reuses an exact saved review, including rejection, without another model call',async()=>{
- for(const acceptable of [true,false]){
-  const {p,analysis}=fixture(),first=await execute(p,analysis,acceptable),replayed=await execute(first.output,analysis);
-  expect(replayed.roles).toEqual([]);expect(replayed.output.state).toBe(acceptable?'review_ready':'specialist_exception');
- }
+ // An accepted review is reused exactly, with no further model call.
+ {const {p,analysis}=fixture(),first=await execute(p,analysis,true),replayed=await execute(first.output,analysis);
+  expect(replayed.roles).toEqual([]);expect(replayed.output.state).toBe('review_ready');}
+ // A rejection is never silently reused as an acceptance. The authorized single repair produces a
+ // changed analysis that must be reviewed again: a reviewer that still rejects keeps the exception,
+ // and only a reviewer that actually accepts the repaired analysis promotes it.
+ {const {p,analysis}=fixture(),first=await execute(p,analysis,false);
+  expect(first.output.state).toBe('specialist_exception');
+  const stillRejected=await execute(first.output,analysis,false);
+  expect(stillRejected.output.state).toBe('specialist_exception');
+  const accepted=await execute(first.output,analysis,true);
+  expect(accepted.output.state).toBe('review_ready');
+  expect(accepted.roles.filter(r=>r==='A3').length).toBeLessThanOrEqual(1);}
 });
 it('makes scope conditional without inventing facts and keeps observation verdicts distinct from hypotheses',()=>{
  const {p,analysis,eid}=fixture(),originalScope=analysis.findings[0].deliverable;p.crmSupplement={inputHash:crmInputHash(p),analysis};
@@ -57,12 +66,24 @@ it('marks a supplement stale safely while a requested re-research has removed th
 });
 it('rejects invented quotations before paying for review and preserves the earlier draft',async()=>{
  const {p,analysis}=fixture();analysis.findings[0].quote='The company requests a paid migration.';
- const result=await execute(p,analysis);expect(result.roles).toEqual(['A3']);expect(result.output.state).toBe('specialist_exception');expect(result.next).toBeNull();expect(result.output.draft).toEqual(p.draft);
+ const result=await execute(p,analysis);
+ // One repair attempt is permitted; an analysis that still invents a quotation is never reviewed.
+ expect(result.roles.every(r=>r==='A3')).toBe(true);
+ expect(result.roles).not.toContain('A5');
+ expect(result.roles.length).toBeLessThanOrEqual(2);
+ expect(result.output.state).toBe('specialist_exception');expect(result.next).toBeNull();expect(result.output.draft).toEqual(p.draft);
 });
 it('keeps a rejected supplement out of downstream drafting and detects evidence or review tampering',async()=>{
  const {p,analysis}=fixture(),result=await execute(p,analysis,false);
- expect(result.output.state).toBe('specialist_exception');expect(result.next).toBeNull();expect(crmReviewProblems(result.output)).toContain('Unsupported buying intent');
- const amended=structuredClone(result.output);amended.crmSupplement!.review!.acceptable=true;amended.crmSupplement!.review!.issues=[];
+ expect(result.output.state).toBe('specialist_exception');expect(result.next).toBeNull();
+ // The reviewer's rejection is what keeps this supplement out of drafting.
+ expect(crmReviewProblems(result.output).length).toBeGreaterThan(0);
+ // Tampering is detected even on an ACCEPTED supplement: flipping the evidence origin and
+ // recomputing every hash still fails the source-attribution check. (The rejected packet above has
+ // no review left to tamper with, because the authorized repair discards a superseded review.)
+ const fresh=fixture();const acceptedRun=await execute(fresh.p,fresh.analysis,true);
+ const amended=structuredClone(acceptedRun.output);
+ amended.crmSupplement!.review!.acceptable=true;amended.crmSupplement!.review!.issues=[];
  amended.evidence[0].origin='provider_reported';amended.crmSupplement!.inputHash=crmInputHash(amended);amended.crmSupplement!.review!.inputHash=hash(crmReviewTarget(amended));
  expect(crmReviewProblems(amended)).toContain('CRM source attribution:crm1');
  const job=Job.parse({id:randomUUID(),organization_id:randomUUID(),campaign_id:randomUUID(),opportunity_id:randomUUID(),stage:'S11',business_key:'stale',input_hash:hash(result.output),input_version:1,schema_version:'1',prompt_version:'7',attempt_token:randomUUID(),attempts:1,payload:result.output});

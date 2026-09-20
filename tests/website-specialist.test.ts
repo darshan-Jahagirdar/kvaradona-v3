@@ -41,10 +41,44 @@ it('accepts zero findings for both profiles and never treats an incomplete captu
  const incomplete=fixture();incomplete.capture.complete=false;const limited=harness(incomplete.capture,incomplete.analysis);
  expect(await websiteSpecialistStep(incomplete.p,limited.tools)).toBeNull();expect(incomplete.p.state).toBe('website_pending');expect(limited.calls).toEqual([]);
 });
-it('rejects invented observations and unstable visual claims before paying for evidence review',async()=>{
- for(const failure of ['invented','unstable'] as const){const {p,capture,analysis}=fixture();if(failure==='invented')analysis.findings[0].observationIds=['not_measured'];else capture.renderStable=false;
-  const h=harness(capture,analysis);await websiteSpecialistStep(p,h.tools);expect(await websiteSpecialistStep(p,h.tools)).toBeNull();expect(p.state).toBe('specialist_exception');expect(h.calls).toEqual(['A3']);
+it('rejects invented observations and unstable visual claims, and one repair cannot launder them',async()=>{
+ // The authorized single specialist repair may run, but an analysis that still cites an unmeasured
+ // observation must never reach review. Only an actually corrected analysis passes.
+ for(const failure of ['invented','unstable'] as const){
+  const {p,capture,analysis}=fixture();
+  if(failure==='invented')analysis.findings[0].observationIds=['not_measured'];else capture.renderStable=false;
+  const h=harness(capture,analysis);
+  await websiteSpecialistStep(p,h.tools);   // capture
+  await websiteSpecialistStep(p,h.tools);   // A3, problems detected
+  expect(h.calls[0]).toBe('A3');
+  // The repair is permitted, but a repair that returns the same unmeasured observation settles at
+  // an exception rather than being reviewed.
+  for(let i=0;i<3&&p.state!=='specialist_exception';i++)await websiteSpecialistStep(p,h.tools);
+  expect(p.state).toBe('specialist_exception');
+  // A5 is never paid for an analysis whose observations were never measured.
+  expect(h.calls).not.toContain('A5');
+  expect(websiteReviewProblems(p).length).toBeGreaterThan(0);
  }
+});
+
+it('lets a genuinely corrected analysis pass after the single permitted repair',async()=>{
+ const {p,capture,analysis}=fixture();
+ analysis.findings[0].observationIds=['not_measured'];
+ const corrected={...analysis,findings:[{...analysis.findings[0],observationIds:['mobile_field_0']},analysis.findings[1]]};
+ let repaired=false;
+ const calls:string[]=[];
+ const tools={websiteCapture:async()=>capture,websiteImages:async()=>[],
+  ai:{async generate(role:string,key:string,schema:any,_i:unknown,input:any){
+   calls.push(role);
+   if(role==='A3'){if(key.includes('repair')){repaired=true;return schema.parse(corrected);}return schema.parse(analysis);}
+   const source=repaired?corrected:analysis;
+   return schema.parse({inputHash:input.inputHash,acceptable:true,issues:[],
+    verdicts:source.findings.map((f:any)=>({findingId:f.id,observationIds:f.observationIds,verdict:'supported_hypothesis',reason:''}))});
+  }}} as unknown as WebsiteTools;
+ for(let i=0;i<4;i++)await websiteSpecialistStep(p,tools);
+ expect(repaired).toBe(true);
+ expect(websiteReviewProblems(p)).toEqual([]);
+ expect(p.state).not.toBe('specialist_exception');
 });
 it('binds reviews to exact measurements and finding coverage rather than an acceptable flag',async()=>{
  const {p,capture,analysis}=fixture(),h=harness(capture,analysis);for(let i=0;i<3;i++)await websiteSpecialistStep(p,h.tools);

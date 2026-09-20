@@ -1,10 +1,12 @@
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {Candidate,type Packet,type Evidence} from '../contracts/pipeline';
-import {companyContextQuery} from '../domain/company-discovery';
-import {discoveryPriority,firstPartyATS,hostOf,eventKey} from '../domain/policy';
+import {companyContextQueries} from '../domain/company-discovery';
+import {discoveryPriority,firstPartyATS,hostOf,eventKey,boilerplatePage,productCataloguePage} from '../domain/policy';
 import {topicRelevance} from '../domain/intent-topics';
-import {relatedCompanyContext} from '../domain/company-research';
+import {contextAdequacy} from '../domain/company-research';
+import {attributeCompanyEvidence,usableCompanyEvidence,ownedHost} from '../domain/evidence-attribution';
+import {resolveCompanyFacts} from '../domain/fact-resolution';
 import {sourceFailure,type SourceAttempt} from '../capture/source-error';
 export interface CompanyContextTools {
  companyEvidence?:(host:string)=>Promise<Evidence[]>;
@@ -13,35 +15,46 @@ export interface CompanyContextTools {
 }
 export async function collectCompanyContext(p:Packet,tools:CompanyContextTools):Promise<boolean>{
  const c=p.candidate!.providerCompany!;
- if(c.provider==='explorium'&&(c.icp.status!=='match'||c.intent.status!=='provider_reported')){p.state='company_assessment_pending';p.notes.push(...c.icp.unknowns,c.intent.reason);return false;}
- if(c.icp.status==='mismatch'){p.state='icp_mismatch';p.notes.push(...c.icp.reasons);return false;}
- if(!c.domain){p.state='company_context_pending';p.notes.push('Company domain unavailable; original attribution needs human assessment.');return false;}
- const owned=(host:string)=>host===c.domain||host.endsWith('.'+c.domain);
- // Preserve the source URL while attributing a company-owned subdomain to the company.
- const attribute=(e:Evidence)=>e.origin==='original'&&e.accountHost===hostOf(e.finalUrl)&&owned(e.accountHost)&&!firstPartyATS(e.accountHost)?{...e,accountHost:c.domain}:e;
- const valid=(e:Evidence)=>e.origin==='original'&&e.accountHost===c.domain&&Date.parse(e.retrievedAt)>=Date.now()-7*86400000&&Date.parse(e.retrievedAt)<=Date.now()+60000;
+ p.factResolution=resolveCompanyFacts(p);
+ if(p.factResolution.status==='mismatch'){p.state='icp_mismatch';p.notes.push('Saved attributes place this company outside the current target; no exact-count enrichment is needed.');return false;}
+ if(p.factResolution.status==='unresolved'){p.state='company_assessment_pending';p.notes.push(...p.factResolution.questions,...p.factResolution.conflicts);return false;}
+ if(!c.domain){p.state='company_context_pending';return false;}
+ const valid=(e:Evidence)=>usableCompanyEvidence(e,c,p.evidence);
+ // Legal boilerplate attributes to the company but researches nothing, so it may not end retrieval or stand in for context.
+ const substantive=(e:Evidence)=>valid(e)&&!boilerplatePage(e.finalUrl,e.title);
  const record=(a:SourceAttempt)=>{p.contextAttempts=[...(p.contextAttempts??[]).filter(v=>v.url!==a.url||v.code!==a.code||v.stage!==a.stage),a].slice(-12);};
- const seen=new Set<string>(),saved=[...p.evidence,...await tools.companyEvidence?.(c.domain)??[]].map(attribute).filter(valid).filter(e=>{const key=eventKey(e.finalUrl);if(seen.has(key))return false;seen.add(key);return true;});
- const related=saved.filter(e=>relatedCompanyContext(e,c));
- p.evidence=(related.length?related.slice(0,2):saved.slice(0,1)).map(e=>({...e,id:randomUUID()}));
- if(related.length){p.notes.push('Reused recent original evidence relevant to the matched topic; supported need still requires assessment.');p.state='evidence_collected';return true;}
- for(const attempt of p.contextAttempts??[])if(/403|robots_disallowed|unsafe/.test(attempt.code))seen.add(eventKey(attempt.url));
+ // Keep old IDs and dates, including evidence cited by preserved drafts and specialist findings.
+ const external=await tools.companyEvidence?.(c.domain)??[];
+ const saved=[...p.evidence,...external.filter(e=>!p.evidence.some(v=>v.contentHash===e.contentHash&&v.accountHost===e.accountHost)).map(e=>({...e,id:randomUUID(),derivedFromEvidenceId:e.id}))].map(e=>attributeCompanyEvidence(e,c,p.evidence));
+ p.evidence=[...new Map([...p.evidence,...saved].map(e=>[e.id,e])).values()];
+ const seen=new Set(p.evidence.filter(valid).map(e=>eventKey(e.finalUrl)));
+ for(const a of p.contextAttempts??[])if(/403|robots_disallowed|unsafe/.test(a.code)&&!p.recovery?.retryUrls?.includes(a.url))seen.add(eventKey(a.url));
+ const plan=companyContextQueries(c,p.researchRequest?.question),queries:string[]=[];
+ const finish=(stop:'adequate'|'exhausted'|'execution_hold')=>{
+  const coverage=contextAdequacy(p).coverage;p.contextSearch={version:'kvd101',question:plan[0].question,queries,stop,coverage};
+  const ready=p.evidence.some(substantive);p.state=ready?'evidence_collected':'company_context_pending';
+  if(!ready)p.notes.push('Company retained: unavailable evidence is not commercial rejection.');
+  return ready;
+ };
+ if(contextAdequacy(p).adequate&&!p.researchRequest)return finish('adequate');
  let reads=0;
- const read=async(url:string)=>{const key=eventKey(url);if(reads>=4||seen.has(key)||p.evidence.length>=2)return;seen.add(key);reads++;
-  try{const e=attribute(await tools.fetchEvidence(url,record));if(valid(e)){const finalKey=eventKey(e.finalUrl);if(!p.evidence.some(v=>eventKey(v.finalUrl)===finalKey))p.evidence.push(e);seen.add(finalKey);return;}record({url,stage:'attribution',code:'company_identity_unresolved'});p.notes.push('Fetched source did not establish original company attribution.');}catch(error){const detail=sourceFailure(error,url,'page');record(detail);p.notes.push(`Company source unavailable: ${detail.code}.`);}};
- const rank=(r:z.infer<typeof Candidate>)=>topicRelevance(r.title+' '+r.description,c)*30+(/implementation|migration|rollout|initiative|project|launch|hiring|integration|redesign/i.test(r.title+' '+r.description)?10:0)+(firstPartyATS(hostOf(r.url))?5:0);
- for(const pass of [0,1,2]){
-  if(pass>0&&p.evidence.length)break;
-  const alternate=pass===1;
-  let results:z.infer<typeof Candidate>[];
-  try{results=await tools.search('company_context_v3_'+pass,pass===2?'site:'+c.domain+' about company services':companyContextQuery(c,alternate),p.candidate!.country,p.candidate!.language);}
-  catch(error){if(!(error instanceof Error)||error.message!=='budget_paused')throw error;p.notes.push('Paid context search paused by its budget guard; use saved evidence or the bounded company homepage read.');break;}
-  const ranked=results.filter(r=>{try{const h=hostOf(r.url);return (owned(h)||firstPartyATS(h))&&discoveryPriority(r)>=0&&!seen.has(eventKey(r.url));}catch{return false;}}).sort((a,b)=>rank(b)-rank(a));
-  // Keep capacity for a changed query or the company homepage if the first page fails.
-  for(const candidate of ranked.slice(0,2)){await read(candidate.url);if(p.evidence.length)break;}
+ const read=async(url:string)=>{const key=eventKey(url);if(reads>=4||seen.has(key))return;seen.add(key);reads++;
+  try{const e=attributeCompanyEvidence(await tools.fetchEvidence(url,record),c,p.evidence);if(valid(e)){if(!p.evidence.some(v=>eventKey(v.finalUrl)===eventKey(e.finalUrl)&&v.contentHash===e.contentHash))p.evidence.push(e);seen.add(eventKey(e.finalUrl));}else record({url,stage:'attribution',code:'company_identity_unresolved'});}
+  catch(error){record(sourceFailure(error,url,'page'));}};
+ const rank=(r:z.infer<typeof Candidate>)=>topicRelevance(r.title+' '+r.description,c)*30+(/implementation|migration|rollout|initiative|project|launch|hiring|integration|redesign/i.test(r.title+' '+r.description)?10:0)+(firstPartyATS(hostOf(r.url))?5:0)-(boilerplatePage(r.url,r.title)?60:0)-(productCataloguePage(r.url,r.title)?15:0);
+ for(const [i,pass] of plan.entries()){
+  if(reads>=4)break;
+  let results:z.infer<typeof Candidate>[];queries.push(pass.query);
+  try{results=await tools.search('company_context_kvd101_'+i,pass.query,p.candidate!.country,p.candidate!.language);}
+  catch(error){if(!(error instanceof Error)||!['budget_paused','provider_unverified','live_disabled'].includes(error.message))throw error;
+   // A paid-search guard must not also stop free retrieval: the company's own front door is still
+   // reachable, and a company with no readable source is an assessment candidate, not a rejection.
+   p.notes.push(`Paid search stopped by a budget guard (${error.message}); the free company front door was still read.`);
+   if(!p.evidence.some(substantive))await read('https://'+c.domain);
+   return finish('execution_hold');}
+  const ranked=results.filter(r=>{try{return discoveryPriority(r)>=0&&!seen.has(eventKey(r.url))&&(ownedHost(hostOf(r.url),c.domain!)||firstPartyATS(hostOf(r.url))||r.title.toLowerCase().includes(c.name.toLowerCase()));}catch{return false;}}).sort((a,b)=>rank(b)-rank(a));
+  for(const candidate of ranked.slice(0,2)){await read(candidate.url);if(contextAdequacy(p).adequate)return finish('adequate');}
  }
- if(!p.evidence.length)await read('https://'+c.domain);
- if(!p.evidence.length){p.state='company_context_pending';p.notes.push('Identified company retained for human assessment; source limitations do not establish poor fit.');return false;}
- if(!p.evidence.some(e=>relatedCompanyContext(e,c)))p.notes.push('Only general company context was available. Need remains unconfirmed; the controlled limitation is included in model inputs.');
- p.state='evidence_collected';return true;
+ if(!p.evidence.some(substantive))await read('https://'+c.domain);
+ return finish('exhausted');
 }

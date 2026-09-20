@@ -1,15 +1,43 @@
 import { PGlite } from '@electric-sql/pglite';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import type { Store } from '../src/persistence/client';
 export const migrationPath = 'supabase/migrations/20260906110533_foundation_execution.sql';
-export async function testDatabase() {
- const db=new PGlite();
+async function bootstrap(db:PGlite){
  await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
  create schema auth; create table auth.users(id uuid primary key,email text);
  create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
  grant usage on schema public,auth to anon,authenticated,service_role; grant execute on function auth.uid() to public;`);
+}
+export async function testDatabase() {
+ const db=new PGlite();
+ await bootstrap(db);
  await db.exec(await readFile(migrationPath,'utf8'));
  return db;
+}
+/** Every migration in order, so a change can be exercised against the real accumulated schema.
+ *  Supabase Storage is not part of PGlite, so the bucket migration is stubbed rather than skipped. */
+export async function migratedDatabase(){
+ const db=new PGlite();
+ await bootstrap(db);
+ // Supabase Storage is a managed schema PGlite does not ship. Stub the two objects the capture
+ // migration touches so the chain applies in order; nothing here exercises Storage behaviour.
+ await db.exec(`create schema storage;
+ create table storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint,allowed_mime_types text[],created_at timestamptz default now());
+ create table storage.objects(id uuid primary key default gen_random_uuid(),bucket_id text,name text,owner uuid,metadata jsonb);
+ alter table storage.objects enable row level security;`);
+ const files=(await readdir('supabase/migrations')).filter(f=>f.endsWith('.sql')).sort();
+ for(const f of files){
+  try{await db.exec(await readFile(`supabase/migrations/${f}`,'utf8'));}
+  catch(e){throw new Error(`migration ${f} failed: ${(e as Error).message}`);}
+ }
+ return db;
+}
+/** Run a statement as an authenticated end user, exactly as PostgREST would. */
+export async function asUser<T>(db:PGlite,userId:string,run:()=>Promise<T>):Promise<T>{
+ await db.exec(`set local role authenticated`).catch(()=>{});
+ await db.query(`select set_config('request.jwt.claim.sub',$1,false)`,[userId]);
+ await db.exec(`set role authenticated`);
+ try{return await run();}finally{await db.exec(`reset role`);await db.query(`select set_config('request.jwt.claim.sub','',false)`);}
 }
 export function localStore(db:PGlite):Store {
  return {async rpc(name,args) {

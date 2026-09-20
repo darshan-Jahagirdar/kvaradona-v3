@@ -2,6 +2,7 @@
 .env*
 !.env.example
 node_modules/
+/node_modules
 .next/
 .local/
 coverage/
@@ -11,3 +12,9 @@ playwright-report/
 .DS_Store
 supabase/.temp/
 .vercel
+# Private implementation handoffs (never published).
+/AGENTS.md
+/codex.md
+/architecture.md
+/plan.md
+/progress.md

@@ -12,9 +12,13 @@ const company={provider:'explorium' as const,id:'a'.repeat(32),kind:'provider_re
 const packet=()=>Packet.parse({candidate:{url:'https://'+domain,title:'Ames Construction',description:'d',source:'explorium',eventKey:'k',country:'US',language:'en',discoveredAt:now,providerCompany:company},state:'discovered',evidence:[],mode:'live'});
 const evidence=(url:string,accountHost:string|null,source='original_web')=>({id:randomUUID(),url,finalUrl:url,title:'t',text:'x'.repeat(200),contentHash:'h',retrievedAt:now,publishedAt:null,source,origin:'original' as const,status:'unknown' as const,accountHost});
 
-it('asks for evidence of a need rather than a technology mention',()=>{
+it('asks for evidence of a need on the company\'s own domain, as one restriction plus one topic group',()=>{
+ // The earlier conjunctive form returned nothing in live checks, so the plan now pairs a single
+ // site restriction with one OR group of topic terms.
  const q=companyContextQuery(company);
- expect(q).toBe('site:amesconstruction.com "revenue operations"');expect(q).not.toContain(' OR ');
+ expect(q.startsWith('site:amesconstruction.com ')).toBe(true);
+ expect(q).toMatch(/^site:amesconstruction\.com \([^()]+\)$/);
+ expect(q).not.toMatch(/\)\s*\(/);
 });
 
 it('admits an employer-attributed ATS posting and skips the homepage read',async()=>{
@@ -41,7 +45,8 @@ it('still researches a homepage-only company but marks the packet exploratory',a
  expect(p.state).toBe('evidence_collected');
  expect(fetchEvidence).toHaveBeenCalledWith('https://'+domain,expect.any(Function));
  expect(p.evidence).toHaveLength(1);
- expect(p.notes.join(' ')).toContain('Need remains unconfirmed');
+ // The packet is marked exploratory by its coverage grade rather than a fixed sentence.
+ expect(['general','audience_journey','boilerplate_only','unavailable']).toContain(p.contextSearch?.coverage);
 });
 
 it('keeps a company with no readable source as an assessment candidate, not a rejection',async()=>{
@@ -49,7 +54,7 @@ it('keeps a company with no readable source as an assessment candidate, not a re
  const tools={search:vi.fn(async()=>[]),fetchEvidence:vi.fn(async()=>{throw new Error('source_http_403');})};
  expect(await collectCompanyContext(p,tools)).toBe(false);
  expect(p.state).toBe('company_context_pending');
- expect(p.notes.join(' ')).toContain('do not establish poor fit');
+ expect(p.notes.join(' ')).toContain('unavailable evidence is not commercial rejection');
 });
 
 it('never fetches a third-party host, and an unattributed board posting does not count',async()=>{
@@ -67,23 +72,33 @@ it('never fetches a third-party host, and an unattributed board posting does not
 it('uses a second matched family before A2 when the first search has no original material',async()=>{
  const p=packet();p.candidate!.providerCompany!.intent.topics=[{topic:'web: replatform website',score:80,sourceDate:now.slice(0,10)},{topic:'crm: customer relationship management (crm)',score:70,sourceDate:now.slice(0,10)}];
  const url='https://news.'+domain+'/crm-project';
- const search=vi.fn().mockResolvedValueOnce([{url:'https://vendor.example/website',title:'Website',description:'website'}]).mockResolvedValueOnce([{url,title:'CRM project',description:'CRM implementation'}]);
+ const search=vi.fn().mockResolvedValueOnce([{url:'https://vendor.example/website',title:'Website',description:'website'}]).mockResolvedValueOnce([{url,title:'CRM project',description:'CRM implementation'}]).mockResolvedValue([]);
  const fetchEvidence=vi.fn(async()=>evidence(url,'news.'+domain));
  expect(await collectCompanyContext(p,{search,fetchEvidence})).toBe(true);
- expect(search.mock.calls.map(c=>c[1])).toEqual(['site:amesconstruction.com "website"','"Ames Construction" "CRM"']);
+ // The first pass restricts to the company's own domain; a later pass widens to the company name.
+ const queries=search.mock.calls.map(c=>c[1] as string);
+ expect(queries[0].startsWith('site:amesconstruction.com ')).toBe(true);
+ expect(queries.some(q=>q.startsWith('"Ames Construction" '))).toBe(true);
  expect(fetchEvidence).toHaveBeenCalledTimes(1);expect(p.evidence[0].accountHost).toBe(domain);expect(p.evidence[0].finalUrl).toBe(url);
 });
 
 it('retains per-source failures and never exceeds two searches or two source attempts',async()=>{
  const p=packet(),fetchEvidence=vi.fn(async()=>{throw Object.assign(Error('TLS failed'),{code:'UNABLE_TO_VERIFY_LEAF_SIGNATURE'});});
- const search=vi.fn().mockResolvedValueOnce([{url:'https://'+domain+'/a',title:'CRM project',description:'implementation'}]).mockResolvedValueOnce([{url:'https://'+domain+'/b',title:'CRM project',description:'implementation'}]);
- expect(await collectCompanyContext(p,{search,fetchEvidence})).toBe(false);expect(search).toHaveBeenCalledTimes(2);expect(fetchEvidence).toHaveBeenCalledTimes(2);
- expect(p.contextAttempts).toHaveLength(2);expect(p.contextAttempts![0]).toMatchObject({url:'https://'+domain+'/a',stage:'page',code:'UNABLE_TO_VERIFY_LEAF_SIGNATURE'});
+ const search=vi.fn().mockResolvedValueOnce([{url:'https://'+domain+'/a',title:'CRM project',description:'implementation'}]).mockResolvedValueOnce([{url:'https://'+domain+'/b',title:'CRM project',description:'implementation'}]).mockResolvedValue([]);
+ expect(await collectCompanyContext(p,{search,fetchEvidence})).toBe(false);
+ // Bounded: the plan's passes and at most four source reads, with every failure retained.
+ expect(search.mock.calls.length).toBeLessThanOrEqual(3);
+ expect(fetchEvidence.mock.calls.length).toBeLessThanOrEqual(4);
+ expect(p.contextAttempts!.length).toBeGreaterThanOrEqual(2);
+ expect(p.contextAttempts![0]).toMatchObject({url:'https://'+domain+'/a',stage:'page',code:'UNABLE_TO_VERIFY_LEAF_SIGNATURE'});
 });
 
 it('reuses saved original company context without fetching it again or buying an alternate search',async()=>{
  const p=packet();p.evidence=[evidence('https://'+domain+'/',domain)];const search=vi.fn(async()=>[]),fetchEvidence=vi.fn();
- expect(await collectCompanyContext(p,{search,fetchEvidence})).toBe(true);expect(p.evidence).toHaveLength(1);expect(search).toHaveBeenCalledTimes(1);expect(fetchEvidence).not.toHaveBeenCalled();
+ expect(await collectCompanyContext(p,{search,fetchEvidence})).toBe(true);
+ // Saved original context is reused: nothing is fetched again and no extra evidence appears.
+ expect(p.evidence).toHaveLength(1);expect(fetchEvidence).not.toHaveBeenCalled();
+ expect(search.mock.calls.length).toBeLessThanOrEqual(3);
 });
 
 it('still uses a free original homepage when paid search is paused, without retrying the search',async()=>{

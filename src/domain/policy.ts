@@ -1,3 +1,4 @@
+import {validStructuredFact} from './structured-evidence';
 import { createHash } from 'node:crypto';
 import { getDomain } from 'tldts';
 import type { Packet, Research, Review } from '../contracts/pipeline';
@@ -5,6 +6,12 @@ export const hash = (value: unknown) => createHash('sha256').update(JSON.stringi
 export function hostOf(url: string) { return new URL(url).hostname.toLowerCase().replace(/^www\./, ''); }
 /** Boards that publish a structured employer identity, so a posting can attribute to the employer's own domain. */
 export const firstPartyATS=(host:string)=>/(^|\.)(ashbyhq\.com|greenhouse\.io|lever\.co)$/.test(host);
+/** Legal and consent boilerplate. It names the company but describes none of its work, so it cannot satisfy research.
+ *  An accessibility statement is deliberately NOT included: it states commitments and standards a company
+ *  holds itself to, which can support accessibility research, though it proves neither defect nor demand. */
+export const boilerplatePage=(url:string,title:string)=>/(^|\/)(privacy|privacy-policy|legal|terms|terms-of-use|terms-of-service|cookie|cookies|disclaimer|gdpr|dmca)(\/|$|[-_.])/i.test(new URL(url).pathname)||/\b(privacy policy|terms of (?:use|service)|cookie policy|legal notice)\b/i.test(title);
+/** A page describing what the company sells. It establishes the audience and its journey, never an internal initiative. */
+export const productCataloguePage=(url:string,title:string)=>/(^|\/)(certificates?|courses?|programs?|programmes?|curriculum|training|classes|products?|pricing|plans|catalogs?|catalogues?)(\/|$)/i.test(new URL(url).pathname)||/\b(certificate|course|curriculum|syllabus|degree program)\b/i.test(title);
 export function identity(url: string) { const host = hostOf(url); return { host, registrableDomain: getDomain(host), verifiedAlias: false }; }
 export function eventKey(url: string) {
   const u = new URL(url); u.hash = '';
@@ -42,11 +49,21 @@ export function validateResearch(research: Research, packet: Packet): string[] {
   const ids = new Set<string>();
   for (const c of research.claims) {
     if(ids.has(c.id)) errors.push(`Duplicate claim:${c.id}`); ids.add(c.id);
+    const structured=packet.evidence.flatMap(e=>(e.companyFacts??[]).filter(f=>f.id===c.evidenceId).map(f=>({e,f}))).find(Boolean);
+    if(structured){
+      const {e,f}=structured;if(c.kind!=='fact'||c.quote!==''||c.text!==f.statement||e.origin!=='original'||e.accountHost!==research.accountHost||!validStructuredFact(e,f))errors.push(`Invalid structured assertion:${c.id}`);
+      continue;
+    }
+    const observation=packet.providerObservations?.find(o=>o.id===c.evidenceId);
+    if(observation){
+      if(c.kind!=='fact'||c.quote!==''||c.text!==observation.statement||observation.companyHost!==research.accountHost)errors.push(`Invalid provider assertion:${c.id}`);
+      continue;
+    }
     const e = packet.evidence.find(x => x.id === c.evidenceId);
     if (!e || (c.kind==='fact'&&!c.quote.trim()) || (c.quote.trim()&&!normalized(e.text).includes(normalized(c.quote)))) errors.push(`Unsupported quotation:${c.id}`);
-    if (c.kind === 'fact' && !e?.accountHost) errors.push(`Unresolved source attribution:${c.id}`);
+    if (c.kind === 'fact' && (!e?.accountHost||e.origin!=='original')) errors.push(`Unresolved source attribution:${c.id}`);
   }
-  if (!packet.evidence.some(e => e.accountHost === research.accountHost)) errors.push('Unverified company identity');
+  if (!packet.evidence.some(e => e.origin==='original'&&e.accountHost === research.accountHost)) errors.push('Unverified company identity');
   if (research.decision === 'watch' && !research.watchTrigger) errors.push('Watch requires an observable trigger');
   return errors;
 }
@@ -64,7 +81,7 @@ export function reviewProblems(review: Review, research: Research, packet: Packe
     // A reviewer may use the attributable version of the same original page for an inference/unknown.
     // Facts still require their exact anchored evidence; unrelated pages and unknown IDs never substitute.
     const matchingSource=v.evidenceIds.some(id=>id===claim.evidenceId||(claim.kind!=='fact'&&anchor&&packet.evidence.some(e=>e.id===id&&e.origin==='original'&&e.accountHost===research.accountHost&&eventKey(e.finalUrl)===eventKey(anchor.finalUrl))));
-    if (!matchingSource || v.evidenceIds.some(id => !packet.evidence.some(e => e.id === id))) errors.push(`Invalid review citation:${claim.id}`);
+    if (!matchingSource || v.evidenceIds.some(id => !packet.evidence.some(e => e.id === id)&&!packet.providerObservations?.some(o=>o.id===id)&&!packet.evidence.some(e=>e.companyFacts?.some(f=>f.id===id&&validStructuredFact(e,f))))) errors.push(`Invalid review citation:${claim.id}`);
   }
   return errors;
 }

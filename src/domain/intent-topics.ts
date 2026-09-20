@@ -10,11 +10,18 @@ export const intentTopicProfiles=[
  {id:'marketing_automation',name:'Marketing Automation',topics:['crm: marketing automation'],terms:['marketing automation','lifecycle marketing','campaign operations','marketing operations','lead nurturing'],query:'("marketing automation" OR "lifecycle marketing") (workflow OR integration OR programme OR hiring)',offer:'A scoped assessment of lifecycle/campaign workflows and integrations, with one useful automation deliverable conditional on confirmed need.'},
 ] as const;
 export const activeIntentTopics:string[]=intentTopicProfiles.flatMap(p=>[...p.topics]);
+/** Research-only aliases for non-Bombora topic labels (e.g. an Apollo UI filter name).
+ *  Deliberately NOT part of activeIntentTopics: exploriumFilters() sends that array to the provider
+ *  as catalogue values, and a non-catalogue string there would be an invalid provider request. */
+export const researchTopicAliases:Record<string,readonly string[]>={website:['apollo ui: website design companies']};
+const profileMatches=(p:{id:string;topics:readonly string[]},topic:string)=>p.topics.includes(topic)||(researchTopicAliases[p.id]??[]).includes(topic);
 export const topicProfile=(topic:string)=>intentTopicProfiles.find(p=>(p.topics as readonly string[]).includes(topic));
+/** A UI-sourced topic carries no intensity; absent scores rank last without becoming NaN. */
+const strength=(signals:{topic:string;score?:number}[],p:{id:string;topics:readonly string[]})=>Math.max(0,...signals.filter(s=>profileMatches(p,s.topic)).map(s=>s.score??0));
 export function matchedTopicProfiles(c:ProviderCompany){
  const signals=c.intent.topics??[];
- return intentTopicProfiles.filter(p=>signals.some(s=>(p.topics as readonly string[]).includes(s.topic)))
-  .sort((a,b)=>Math.max(...signals.filter(s=>(b.topics as readonly string[]).includes(s.topic)).map(s=>s.score))-Math.max(...signals.filter(s=>(a.topics as readonly string[]).includes(s.topic)).map(s=>s.score)));
+ return intentTopicProfiles.filter(p=>signals.some(s=>profileMatches(p,s.topic)))
+  .sort((a,b)=>strength(signals,b)-strength(signals,a));
 }
 export function topicResearchPlan(c:ProviderCompany){
  const profiles=matchedTopicProfiles(c);

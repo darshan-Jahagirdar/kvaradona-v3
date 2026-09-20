@@ -2,12 +2,19 @@ import { z } from 'zod';
 import {WebsiteSupplement,WebsiteProfile} from './website';
 import {ProcurementNotice,ProcurementDetails,ProcurementDocuments} from './procurement';
 import {ProviderJob,ProviderCompany} from './discovery';
+export const StructuredReference=z.object({sourceId:z.string(),pointers:z.array(z.string()).min(1).max(2)});
 export const Evidence = z.object({
   id: z.string().uuid(), url: z.string().url(), finalUrl: z.string().url(), title: z.string(),
   text: z.string().max(24000), contentHash: z.string(), retrievedAt: z.string().datetime(),
   publishedAt: z.string().nullable(), source: z.string(), origin: z.enum(['original','provider_reported']),
   status: z.enum(['current','closed','unknown']), accountHost: z.string().nullable(),
+  derivedFromEvidenceId:z.string().uuid().optional(),
+  structuredSources:z.array(z.object({id:z.string(),sourceUrl:z.string().url(),scriptIndex:z.number().int().nonnegative(),rawJson:z.string().max(24000),contentHash:z.string()})).max(8).optional(),
+  companyFacts:z.array(z.object({id:z.string().uuid().optional(),field:z.enum(['employees','employeeRange','country','industry','name','alternateName']),value:z.union([z.string(),z.number()]),quote:z.string().optional(),statement:z.string().optional(),sourceRef:StructuredReference.optional()})).max(12).optional(),
+  attribution: z.object({publisherHost:z.string(),issuerName:z.string().nullable(),issuerHost:z.string().nullable(),basis:z.enum(['owned_host','structured_employer','structured_issuer','explicit_issuer_link','unresolved']),sourceType:z.enum(['company_page','job','announcement','procurement','third_party']),quote:z.string(),sourceRef:StructuredReference.optional(),linkSource:z.object({html:z.string().max(4000),href:z.string(),label:z.string()}).optional()}).optional(),
 });
+export const ProviderObservation=z.object({id:z.string().uuid(),provider:z.enum(['explorium','apollo']),companyId:z.string(),companyHost:z.string(),field:z.enum(['intent','employees','employeeRange','country','industry','companyName']),value:z.union([z.string(),z.number()]),topic:z.string().optional(),sourceDate:z.string().nullable(),observedAt:z.string().datetime(),operationId:z.string().uuid(),responseHash:z.string(),fieldPath:z.string(),statement:z.string()});
+export const RepairRecord=z.object({stage:z.string(),issueHash:z.string(),inputHash:z.string(),outputHash:z.string().optional(),issues:z.array(z.string()),changed:z.boolean().optional()});
 export const Claim = z.object({ id: z.string(), text: z.string(), kind: z.enum(['fact','inference','unknown']),
   evidenceId: z.string().uuid(), quote: z.string(), material: z.boolean() });
 export const Research = z.object({
@@ -38,6 +45,21 @@ export const Contact = z.object({ name: z.string().nullable(), role: z.string(),
 export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),searchCountry:z.string().optional(),language:z.string(),discoveredAt:z.string().datetime(),providerRecord:ProviderJob.optional(),providerCompany:ProviderCompany.optional(),procurementNotice:ProcurementNotice.optional()});
 export const Packet = z.object({
   candidate: Candidate.optional(),
+  reviewAllocation:z.object({cohortId:z.string(),policyShare:z.number().min(0).max(1),capacity:z.number().int().positive(),explorationLimit:z.number().int().nonnegative(),decision:z.enum(['admitted','deferred','diagnostic']),reason:z.string()}).optional(),
+  contactSearchRequest:z.object({requestId:z.string().uuid(),reason:z.string().min(20).max(3000),requestedAt:z.string(),completedAt:z.string().optional()}).optional(),
+  preserveDraftWording:z.boolean().optional(),
+  contractVersion:z.literal('kvd101').optional(),
+  /** A person explicitly accepted this account into a named cohort. Records that decision so eligibility
+   *  routing can proceed; it is NOT provider verification and never supplies a missing attribute value. */
+  eligibility:z.object({basis:z.literal('user_accepted_cohort'),cohort:z.string().min(1).max(120),acceptedNote:z.string().min(10).max(600),
+   employeeRange:z.object({min:z.number().int().nonnegative(),max:z.number().int().positive().optional()}).optional(),
+   countries:z.array(z.string()).max(30).optional()}).optional(),
+  providerObservations:z.array(ProviderObservation).max(80).optional(),
+  contextSearch:z.object({version:z.literal('kvd101'),question:z.string(),queries:z.array(z.string()),stop:z.enum(['adequate','exhausted','execution_hold']),coverage:z.enum(['unavailable','boilerplate_only','general','audience_journey','relevant'])}).optional(),
+  factResolution:z.object({status:z.enum(['match','mismatch','unresolved']),questions:z.array(z.string()),conflicts:z.array(z.string()),reused:z.array(z.string())}).optional(),
+  recovery:z.object({version:z.literal('kvd101'),reason:z.string(),stage:z.enum(['S04','S05','S06','S08','S09','S10','S11']),requestedAt:z.string(),retryUrls:z.array(z.string()).optional()}).optional(),
+  repairs:z.array(RepairRecord).max(12).optional(),
+  procurementContext:z.array(z.object({notice:ProcurementNotice,evidenceIds:z.array(z.string().uuid()),basis:z.string(),scope:z.string(),holds:z.array(z.string())})).max(5).optional(),
   contextAttempts:z.array(z.object({url:z.string().url(),stage:z.enum(['robots','page','attribution']),code:z.string().regex(/^[a-z0-9_]{1,80}$/i),status:z.number().int().optional()})).max(12).optional(),
   draftReplacement:z.object({operationId:z.string().uuid(),model:z.literal('gpt-5.6-terra'),reason:z.string().min(20).max(1000),requestedAt:z.string()}).optional(),
   draftCheckRequest:z.object({requestedAt:z.string(),reviewerId:z.string().uuid()}).optional(),
@@ -48,9 +70,21 @@ export const Packet = z.object({
   deferredWebsite:WebsiteSupplement.optional(),
   researchRepairAttempts:z.number().int().min(0).max(2).optional(),
   specialistRepairAttempts:z.number().int().min(0).max(1).optional(),
+  // Durable logical-attempt counter for drafting. It changes the operation key so a rejected
+  // COMPLETED output is regenerated instead of replayed. It never applies to a dispatched or
+  // ambiguous operation, whose outcome stays held.
+  draftAttempt:z.number().int().min(0).max(2).optional(),
+  // The exact output a check rejected, preserved as evidence and as input for the next attempt.
+  rejectedDraft:z.object({draft:z.unknown(),reason:z.string(),citableClaimIds:z.string(),at:z.string()}).optional(),
+  // What the current draft was written from, so materially improved findings produce a new version.
+  draftBasis:z.string().optional(),
   deferredCrm:z.object({inputHash:z.string(),analysis:CrmAnalysis,review:Review.optional()}).optional(),
   websiteFailure:z.object({inputHash:z.string(),reason:z.enum(['navigation_timeout','capture_unavailable']),at:z.string()}).optional(),
   websiteRequest:z.object({profiles:z.array(WebsiteProfile).min(1).max(2),url:z.string().url(),question:z.string(),requestedAt:z.string(),verificationOnly:z.boolean().default(false)}).optional(),
+  // One automatic journey follow-up, recorded so it happens once and stays auditable.
+  websiteJourney:z.object({url:z.string().url(),label:z.string(),from:z.string(),at:z.string()}).optional(),
+  // The page the current analysis actually sees, tied to the research inputs that chose it.
+  websiteTarget:z.object({url:z.string().url(),inputHash:z.string()}).optional(),
   procurementDocuments:ProcurementDocuments.optional(), contact: Contact.optional(), draft: StoredDraft.optional(), state: z.string(),
   relationship: z.enum(['unknown','clear','handoff','suppressed']).default('unknown'),
   notes: z.array(z.string()).default([]), specialistFindings: z.array(z.object({ profile: z.enum(['crm','cro','aeo']), metric: z.string(), observation: z.string(), hypothesis: z.string() })).default([]),
@@ -60,6 +94,8 @@ export const Job = z.object({
   id: z.string().uuid(), organization_id: z.string().uuid(), campaign_id: z.string().uuid(), opportunity_id: z.string().uuid().nullable(),
   stage: z.string(), business_key: z.string(), input_hash: z.string(), input_version: z.number().int(), schema_version: z.string(), prompt_version: z.string(),
   attempt_token: z.string().uuid(), attempts: z.number(), payload: z.unknown(),
+  // Set when this job belongs to a selected run; null for discovery and historical work.
+  run_id: z.string().uuid().nullable().optional(),
 });
 export type Packet = z.infer<typeof Packet>;
 export type Evidence = z.infer<typeof Evidence>;

@@ -22,5 +22,5 @@ it('prioritizes service-specific requests without excluding useful exploration',
 });
 it('reports offline, queued, running, failure and budget states from real jobs',()=>{
  const s:WorkflowStatus={run:{id:'run',created_at:''},worker:{online:false,seenAt:null},budget:{live_enabled:true},jobs:[{id:'j',opportunity_id:null,stage:'S02',status:'queued',error:null}],opportunities:[]};
- expect(workflowSummary(s).phase).toBe('Waiting for laptop worker');s.worker.online=true;expect(workflowSummary(s).phase).toBe('Queued');s.jobs[0].status='running';expect(workflowSummary(s).phase).toBe('Running');s.jobs[0].status='blocked';s.jobs[0].error='budget_paused';expect(workflowSummary(s).phase).toBe('Paused by budget');s.jobs[0].error='source_unavailable';expect(workflowSummary(s).phase).toBe('Finished with issues');
+ expect(workflowSummary(s).phase).toBe('Waiting for laptop worker');s.worker.online=true;expect(workflowSummary(s).phase).toBe('Queued');s.jobs[0].status='running';expect(workflowSummary(s).phase).toBe('Running');s.jobs[0].status='blocked';s.jobs[0].error='budget_paused';expect(workflowSummary(s).phase).toBe('Paused by budget');s.jobs[0].error='source_unavailable';expect(workflowSummary(s).phase).toBe('Needs attention');
 });

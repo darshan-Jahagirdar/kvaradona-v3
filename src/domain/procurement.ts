@@ -1,3 +1,5 @@
+import {randomUUID} from 'node:crypto';
+import {supportedService} from './service-fit';
 import type {ProcurementNotice} from '../providers/sam';
 
 /** Procurement status is separate from service fit and supplier eligibility. */
@@ -57,4 +59,21 @@ export function procurementDraftProblems(p:Packet){
  }
  if(p.draft.recipient!==null||p.draft.sender!==null)errors.push('Procurement preparation must not invent an email recipient or sender.');
  return errors;
+}
+
+/** Attach supporting notices to an existing company; do not replace its candidate or checked work. */
+export function associateProcurement(p:Packet,source:Packet,now=new Date()){
+ const n=source.candidate?.procurementNotice,c=p.candidate?.providerCompany;
+ const host=c?.domain??p.research?.accountHost,name=c?.name??p.research?.company;
+ if(!n||!host||!name||!n.buyer)return false;
+ const key=(s:string)=>s.toLowerCase().replace(/[^a-z0-9]/g,'');
+ const originals=source.evidence.filter(e=>e.origin==='original'&&(e.accountHost===procurementIdentity(n)||e.accountHost===host));
+ // Exact named buyer plus its original notice; a supplier/company mention is insufficient.
+ if(key(n.buyer)!==key(name)||!originals.length)return false;
+ const scope=originals.map(e=>e.text).join(' ');
+ if(!supportedService(n.title+' '+scope))return false;
+ const copies=originals.map(e=>p.evidence.find(v=>v.id===e.id||v.derivedFromEvidenceId===e.id)??{...e,id:randomUUID(),derivedFromEvidenceId:e.id});
+ const ids=copies.map(e=>e.id),entry={notice:n,evidenceIds:ids,basis:'Exact named buyer and attributed original procurement evidence',scope:n.title,holds:procurementReadiness(n,now).holds};
+ p.procurementContext=[...(p.procurementContext??[]).filter(v=>v.notice.source!==n.source||v.notice.noticeId!==n.noticeId),entry].slice(-5);
+ p.evidence=[...new Map([...p.evidence,...copies].map(e=>[e.id,e])).values()];return true;
 }

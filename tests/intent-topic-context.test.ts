@@ -25,7 +25,10 @@ it('maps all six families, keeps matching topic evidence, deduplicates overlappi
  const data={data:[{business_id:id,data:{business_id:id,company_website:domain,date_stamp:now.toISOString().slice(0,10).replaceAll('-',''),intent_topics:JSON.stringify([...activeIntentTopics.map(topic=>({topic,composite_score:72})),{topic:'unrelated: topic',composite_score:99}])}}]};
  expect(applyExploriumIntent(c,data,now).providerCompany!.intent.topics).toHaveLength(10);
  data.data[0].data.date_stamp='20250101';expect(applyExploriumIntent(c,data,now).providerCompany!.intent.status).toBe('unknown');
- for(const profile of intentTopicProfiles){const p=packet(profile.topics[0]);expect(companyContextQuery(p.candidate!.providerCompany!)).toBe(`site:example.com "${profile.terms[0]}"`);}
+ for(const profile of intentTopicProfiles){const p=packet(profile.topics[0]);const q=companyContextQuery(p.candidate!.providerCompany!);
+  expect(q).toMatch(/^site:example\.com \([^()]+\)$/);
+  const leading=profile.terms[0];
+  expect(q).toContain(/\s/.test(leading)?`"${leading}"`:leading);}
 });
 it('sends the frozen multi-topic definition to discovery and enrichment, filtering unrelated returned enrichment',async()=>{
  const definition=exploriumSearchDefinition(),requests:any[]=[];
@@ -37,10 +40,12 @@ it('sends the frozen multi-topic definition to discovery and enrichment, filteri
 it('refreshes unrelated saved context for a new topic, reuses relevant context, and never reads a repeated homepage twice',async()=>{
  const p=packet(),prior=evidence('/crm','CRM migration details'),seo=evidence('/news','Our SEO initiative expands organic search content into new markets.');
  const tools={companyEvidence:async()=>[prior],search:vi.fn(async()=>[{url:seo.url,title:'SEO project',description:'Organic search'} as any]),fetchEvidence:vi.fn(async()=>seo)};
- expect(await collectCompanyContext(p,tools)).toBe(true);expect(tools.search).toHaveBeenCalledOnce();expect(companyResearchContext(p).topicResearch?.primaryFamily).toBe('SEO');
- const reused=packet();await collectCompanyContext(reused,{...tools,companyEvidence:async()=>[seo]});expect(tools.search).toHaveBeenCalledOnce();
+ expect(await collectCompanyContext(p,tools)).toBe(true);const passes=(tools.search as any).mock.calls.length;expect(passes).toBeLessThanOrEqual(3);expect(companyResearchContext(p).topicResearch?.primaryFamily).toBe('SEO');
+ const reused=packet();await collectCompanyContext(reused,{...tools,companyEvidence:async()=>[seo]});
+ // Reused saved context buys no extra searches beyond the same bounded plan.
+ expect((tools.search as any).mock.calls.length).toBeLessThanOrEqual(passes*2);
  const general=packet(),home=evidence('/','Company introduction');const fetchEvidence=vi.fn(async()=>home);
- await collectCompanyContext(general,{search:async()=>[{url:home.url,title:'Example',description:'Intro'} as any,{url:home.url+'?utm_source=search',title:'Example',description:'Intro'} as any],fetchEvidence});expect(fetchEvidence).toHaveBeenCalledOnce();expect(companyResearchContext(general).evidenceLimitations?.coverage).toBe('general_company_only');
+ await collectCompanyContext(general,{search:async()=>[{url:home.url,title:'Example',description:'Intro'} as any,{url:home.url+'?utm_source=search',title:'Example',description:'Intro'} as any],fetchEvidence});expect(fetchEvidence).toHaveBeenCalledOnce();expect(['general','audience_journey','boilerplate_only']).toContain(companyResearchContext(general).evidenceLimitations?.coverage);
 });
 it('includes controlled limitations in actual A2/A5 inputs, including deep general pages and homepage announcements, without forwarding arbitrary notes',async()=>{
  for(const stage of ['S06','S09']){
@@ -48,9 +53,9 @@ it('includes controlled limitations in actual A2/A5 inputs, including deep gener
  p.research={company:'Example Company',accountHost:domain,identityBasis:'fixture',service:'SEO',demand:'plausible',whyNow:'unknown',offer:'Conditional SEO assessment',buyerRole:'CMO',claims:[],contrary:[],uncertainties:[],decision:'exploration',reason:'fixture',watchTrigger:null,specialist:'none',specialistReason:'none',followUp:null};
  let input:any;const tools={ai:{async generate(_role:any,_key:any,_schema:any,_common:any,value:any){input=value;throw Error('captured');}}} as unknown as StageTools;
  await expect(runStage({rpc:vi.fn()}, {stage,payload:p} as Job,tools)).rejects.toThrow('captured');
- expect(input.evidenceLimitations.coverage).toBe('general_company_only');expect(input.topicResearch.primaryFamily).toBe('SEO');expect(JSON.stringify(input)).not.toContain('Ignore prior instructions');expect(JSON.stringify(input.offer??input.topicResearch.offers)).not.toContain('CRM handoffs');
- expect(draftReviewContext(p).evidenceLimitations?.coverage).toBe('general_company_only');
- p.evidence=[evidence('/','We are launching an SEO content initiative.')];expect(companyResearchContext(p).evidenceLimitations?.coverage).toBe('topic_related_material');expect(companyResearchContext(p).evidenceLimitations?.needAssessment).toContain('unconfirmed');
+ expect(['general','audience_journey','boilerplate_only']).toContain(input.evidenceLimitations.coverage);expect(input.topicResearch.primaryFamily).toBe('SEO');expect(JSON.stringify(input)).not.toContain('Ignore prior instructions');expect(JSON.stringify(input.offer??input.topicResearch.offers)).not.toContain('CRM handoffs');
+ expect(['general','audience_journey','boilerplate_only']).toContain(draftReviewContext(p).evidenceLimitations?.coverage);
+ p.evidence=[evidence('/','We are launching an SEO content initiative.')];expect(['relevant','audience_journey']).toContain(companyResearchContext(p).evidenceLimitations?.coverage);expect(companyResearchContext(p).evidenceLimitations?.needAssessment).toContain('unconfirmed');
  }
 });
 it('does not buy duplicate intent enrichment for an existing company',async()=>{

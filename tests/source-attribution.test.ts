@@ -10,7 +10,14 @@ it('prioritizes specific attributable job evidence over guides and general caree
 });
 it('attributes a hosted employer job from structured evidence and preserves expiry as contrary evidence',()=>{
  const e=extractEvidence('https://jobs.lever.co/northstar/one','https://jobs.lever.co/northstar/one',page({name:'Northstar Fixture',sameAs:'https://northstar.example.test'},'2026-08-31'),new Date('2026-09-06T12:00:00Z'));
- expect(e.accountHost).toBe('northstar.example.test');expect(e.status).toBe('closed');expect(e.text).toContain('Hiring organization: Northstar Fixture.');expect(e.text).toContain(description);
+ expect(e.accountHost).toBe('northstar.example.test');expect(e.status).toBe('closed');
+ // The employer identity is a structured attribution fact now, not prose injected into the page
+ // text, so a quotation can never be satisfied by wording this pipeline wrote itself.
+ expect(e.attribution?.issuerName).toBe('Northstar Fixture');
+ expect(e.attribution?.issuerHost).toBe('northstar.example.test');
+ expect(e.attribution?.basis).toBe('structured_employer');
+ expect(e.text).not.toContain('Hiring organization:');
+ expect(e.text).toContain(description);
 });
 it('keeps board/recruiter identity unresolved without attributing a third-party listing to an inferred client',()=>{
  const e=extractEvidence('https://jobs.ashbyhq.com/agency/one','https://jobs.ashbyhq.com/agency/one',page({name:'Recruiter for an unnamed client'}));
