@@ -311,3 +311,31 @@ it('preserves history after exactly one completed selected run',async()=>{
  // The behaviour is still reverted.
  expect((await db.query<{n:number}>(`select count(*)::int as n from information_schema.routines where routine_name='start_selected_workflow'`)).rows[0].n).toBe(0);
 });
+
+it('records the selected-cohort eligibility so a chosen company is judged by the right profile',async()=>{
+ const db=await migratedDatabase();await seedSelected(db);
+ // A company below the old discovery band, exactly like the confirmed acceptance cohort.
+ const small='40000000-0000-4000-8000-0000000000d1';
+ await db.query(`insert into public.opportunities(id,organization_id,campaign_id,event_key,packet,state) values($1,$2,$3,'small',$4::jsonb,'company_assessment_pending')`,
+  [small,org,campaign,JSON.stringify({mode:'live',state:'company_assessment_pending',evidence:[],
+   candidate:{providerCompany:{name:'Small Co',domain:'small.example',employeeRange:'201-500',headquartersCountry:'united states'}}})]);
+ const run=(await asUser(db,user,()=>launch(db,'50000000-0000-4000-8000-0000000000b0',[small]))).rows[0].value;
+ const packet=(await db.query<{packet:any}>(`select packet from public.opportunities where id=$1`,[small])).rows[0].packet;
+ expect(packet.eligibility.basis).toBe('user_accepted_cohort');
+ expect(packet.eligibility.employeeRange).toEqual({min:200});
+ expect(packet.eligibility.countries).toEqual(['US']);
+ expect(packet.eligibility.cohort).toContain(run.id);
+ // The note must not claim the unknown attributes are now known.
+ expect(packet.eligibility.acceptedNote).toContain('remain unknown');
+
+ // An eligibility already on the packet is never overwritten by a launch.
+ const kept='40000000-0000-4000-8000-0000000000d2';
+ await db.query(`insert into public.opportunities(id,organization_id,campaign_id,event_key,packet,state) values($1,$2,$3,'kept',$4::jsonb,'company_assessment_pending')`,
+  [kept,org,campaign,JSON.stringify({mode:'live',state:'company_assessment_pending',evidence:[],
+   eligibility:{basis:'user_accepted_cohort',cohort:'earlier cohort',acceptedNote:'Accepted earlier for a different reason entirely.',employeeRange:{min:500}}})]);
+ await db.query(`update public.jobs set status='done' where run_id=$1`,[run.id]);
+ await asUser(db,user,()=>launch(db,'50000000-0000-4000-8000-0000000000b1',[kept]));
+ const keptPacket=(await db.query<{packet:any}>(`select packet from public.opportunities where id=$1`,[kept])).rows[0].packet;
+ expect(keptPacket.eligibility.cohort).toBe('earlier cohort');
+ expect(keptPacket.eligibility.employeeRange).toEqual({min:500});
+});

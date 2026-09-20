@@ -223,6 +223,18 @@ begin
   -- New run, new version. The earlier packet stays in history; entry_revision is the revision this
   -- run STARTS at, so nothing counts as produced until a stage of this run completes.
   snap:=o.packet-'draftCheckRequest';
+  -- A reviewer choosing a company IS the acceptance this contract describes. Without it these
+  -- packets are judged against the unrelated discovery ICP and stop before any research happens.
+  -- The band is the selected-company profile, not any particular company, and acceptance never
+  -- overrides contradicting data: fact resolution still raises a genuine conflict as a question.
+  if not (snap ? 'eligibility') then
+   snap:=jsonb_set(snap,'{eligibility}',jsonb_build_object(
+    'basis','user_accepted_cohort',
+    'cohort','selected run '||r.id::text,
+    'acceptedNote','Chosen by a reviewer for this selected-company run. Employee count, revenue and growth remain unknown unless separately evidenced; acceptance does not supply them.',
+    'employeeRange',jsonb_build_object('min',200),
+    'countries',jsonb_build_array('US')));
+  end if;
   snap:=jsonb_set(snap,'{recovery}',jsonb_build_object('version','kvd101','reason','selected_run',
    'stage',entry,'requestedAt',now(),'retryUrls','[]'::jsonb));
   snap:=jsonb_set(snap,'{state}',to_jsonb('research_requested'::text));
