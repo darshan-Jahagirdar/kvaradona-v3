@@ -2,6 +2,7 @@ import {validStructuredFact} from './structured-evidence';
 import type {Packet} from '../contracts/pipeline';
 import {intentIcp} from './intent-target';
 import {discoveryExcludedDomains} from './explorium-icp';
+import {companyIdentity} from './identity-resolution';
 /** Selective eligibility resolution. Estimates remain estimates; disagreeing observations stay unresolved. */
 export function resolveCompanyFacts(p:Packet):NonNullable<Packet['factResolution']>{
  const c=p.candidate?.providerCompany;if(!c)return {status:'unresolved',questions:['Establish company identity.'],conflicts:[],reused:[]};
@@ -12,8 +13,10 @@ export function resolveCompanyFacts(p:Packet):NonNullable<Packet['factResolution
  // An open-ended accepted band has no upper bound; do not substitute the global ceiling for it.
  const targetMin=target.min,targetMax=target.max??Number.POSITIVE_INFINITY;
  const approvedCountries=p.eligibility?.countries??intentIcp.countries.map(x=>x.code);
+ const identity=companyIdentity(p,c.domain);
  const observations=(p.providerObservations??[]).filter(o=>o.companyHost===c.domain&&o.companyId===c.id);
- const originalFacts=p.evidence.filter(e=>e.origin==='original'&&e.accountHost===c.domain).flatMap(e=>(e.companyFacts??[]).filter(f=>validStructuredFact(e,f)));
+ const originalPages=p.evidence.filter(e=>e.origin==='original'&&identity.hosts.includes(e.accountHost??''));
+ const originalFacts=originalPages.flatMap(e=>(e.companyFacts??[]).filter(f=>validStructuredFact(e,f)));
  const fields=[...observations,...originalFacts];
  const questions:string[]=[],conflicts:string[]=[],reused=['Saved provider company attributes'];let mismatch=false;
  const bands=[c.employeeRange,...fields.filter(o=>o.field==='employeeRange').map(o=>String(o.value))].filter(Boolean).flatMap(v=>{const m=v!.match(/^(\d+)-(\d+)$/);return m?[[+m[1],+m[2]]]:[];});
@@ -37,14 +40,27 @@ export function resolveCompanyFacts(p:Packet):NonNullable<Packet['factResolution
  const classification:string[]=[];
  for(const q of c.icp.unknowns)if(/conflict|description/i.test(q)){questions.push(q);classification.push(q);}
  if(!c.domain)questions.push('Resolve company domain.');
- if(c.domain&&discoveryExcludedDomains.some(d=>c.domain===d||c.domain!.endsWith('.'+d)))mismatch=true;
+ // An exclusion applies to the company, so it applies at every address the company is known at.
+ // A supported domain move must not step around a list the old domain was on, or vice versa.
+ if(identity.hosts.some(h=>discoveryExcludedDomains.some(d=>h===d||h.endsWith('.'+d))))mismatch=true;
  if(accepted)reused.push(`Cohort acceptance: ${p.eligibility!.cohort}. Unknown attributes remain unknown and unverified.`);
  if(originalFacts.length)reused.push(`${originalFacts.length} original structured company facts`);
  if(observations.length)reused.push(`${observations.length} attributable saved provider fields`);
+ // Reassess the historical warning against evidence that has actually been acquired. The company's
+ // OWN published classification answers "does the description conflict with the requested industry";
+ // a page that says nothing about it does not. Anything else stays provisional, which is not
+ // resolved and is never reported as resolved.
+ const classifyingFact=originalFacts.find(f=>f.field==='industry');
+ const addressed=classification.length>0&&Boolean(classifyingFact);
+ if(addressed){
+  for(const q of classification){const i=questions.indexOf(q);if(i>=0)questions.splice(i,1);}
+  reused.push(`Historical classification warning reassessed against the company's own published industry ("${String(classifyingFact!.value).slice(0,80)}"); the provider's warning is retained as history.`);
+ }
+ const classificationStatus=classification.length===0?'none' as const:addressed?'addressed_by_evidence' as const:'provisional' as const;
  const status=mismatch&&!conflicts.length?'mismatch':questions.length||conflicts.length?'unresolved':'match';
  const open=mismatch&&!conflicts.length?[]:questions;
  // Answerable by evidence when nothing contradicts the cohort and every open item is a
  // classification question. A conflict or a contradicting attribute is not answerable this way.
  const evidenceCanResolve=status==='unresolved'&&!conflicts.length&&open.length>0&&open.every(q=>classification.includes(q));
- return {status,questions:open,conflicts,reused,classification,evidenceCanResolve};
+ return {status,questions:open,conflicts,reused,classification,evidenceCanResolve,classificationStatus};
 }

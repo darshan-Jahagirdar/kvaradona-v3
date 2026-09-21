@@ -5,8 +5,16 @@ import {firstPartyATS,hostOf} from './policy';
 import {structuredValues,validStructuredFact} from './structured-evidence';
 export const companyNameKey=(name:string)=>name.toLowerCase().replace(/[^a-z0-9]/g,'');
 export const ownedHost=(host:string,companyHost:string)=>host===companyHost||host.endsWith('.'+companyHost);
-type Company={domain:string|null;name:string};
-function issuerBasisValid(e:Evidence){
+/** A company, plus any domain that has been SUPPORTED as the same company's current address.
+ *  Aliases are supplied by the packet's recorded identity resolution; they are never guessed here. */
+type Company={domain:string|null;name:string;aliases?:readonly string[]};
+/** Every host this company is known at: its canonical domain and any supported alias. One policy,
+ *  used by attribution, evidence reuse, deduplication and the contact/website paths alike. */
+export function identityOwnedHost(host:string,company:Company){
+ if(company.domain&&ownedHost(host,company.domain))return true;
+ return (company.aliases??[]).some(a=>Boolean(a)&&ownedHost(host,a));
+}
+export function issuerBasisValid(e:Evidence){
  const a=e.attribution;if(!a?.issuerName||!a.issuerHost||a.publisherHost!==hostOf(e.finalUrl))return false;
  if(a.sourceRef){
   const values=structuredValues(e,a.sourceRef);
@@ -25,7 +33,7 @@ function issuerBasisValid(e:Evidence){
 function issuerNames(company:Company,known:Evidence[]){
  const names=[company.name];if(!company.domain)return names;
  for(const e of known){
-  if(e.origin!=='original'||!ownedHost(hostOf(e.finalUrl),company.domain))continue;
+  if(e.origin!=='original'||!identityOwnedHost(hostOf(e.finalUrl),company))continue;
   for(const f of e.companyFacts??[])if(['name','alternateName'].includes(f.field)&&validStructuredFact(e,f))names.push(String(f.value));
  }
  return names;
@@ -52,13 +60,15 @@ export function redirectAliasEvidence(e:Evidence,company:Company){
 export function companyAttributionValid(e:Evidence,company:Company,known:Evidence[]=[]){
  if(!company.domain||e.origin!=='original')return false;
  const publisher=hostOf(e.finalUrl),a=e.attribution;
- if(ownedHost(publisher,company.domain)&&!firstPartyATS(publisher))return e.accountHost===publisher||e.accountHost===company.domain;
+ // The company's own domain, or a domain already SUPPORTED as its current address. A direct read of
+ // the resolved domain is the same company's page; it does not have to redirect again to qualify.
+ if(identityOwnedHost(publisher,company)&&!firstPartyATS(publisher))return e.accountHost===publisher||e.accountHost===company.domain||(company.aliases??[]).includes(e.accountHost??'');
  // The company's own domain redirected here and this page carries its structured identity, so this
  // is the same company at its current address rather than an unrelated third-party host.
- if(redirectAliasEvidence(e,company))return e.accountHost===publisher||e.accountHost===company.domain;
+ if(redirectAliasEvidence(e,company))return e.accountHost===publisher||e.accountHost===company.domain||(company.aliases??[]).includes(e.accountHost??'');
  // Legacy ATS packets retain their previously validated employer attribution and IDs.
  if(!a&&firstPartyATS(publisher)&&e.accountHost===company.domain&&e.source==='job_posting_web')return true;
- return Boolean(a?.issuerHost&&ownedHost(a.issuerHost,company.domain)&&a.issuerName&&issuerNames(company,known).some(name=>companyNameKey(name)===companyNameKey(a.issuerName!))&&['structured_issuer','explicit_issuer_link','structured_employer'].includes(a.basis)&&issuerBasisValid(e));
+ return Boolean(a?.issuerHost&&identityOwnedHost(a.issuerHost,company)&&a.issuerName&&issuerNames(company,known).some(name=>companyNameKey(name)===companyNameKey(a.issuerName!))&&['structured_issuer','explicit_issuer_link','structured_employer'].includes(a.basis)&&issuerBasisValid(e));
 }
 /** Always validate off-domain issuer name, host and raw basis, even when accountHost is prefilled. */
 export function attributeCompanyEvidence(e:Evidence,company:Company,known:Evidence[]=[]):Evidence {

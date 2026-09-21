@@ -40,8 +40,11 @@ export const CrmAnalysis = z.object({
 export const CrmReview=Review.extend({verdicts:z.array(ClaimReview.extend({verdict:z.enum(['supported','contradicted','unverifiable'])}))});
 export const Contact = z.object({ name: z.string().nullable(), role: z.string(), email: z.string().email().nullable(),
   candidates:z.array(z.object({providerId:z.string(),displayName:z.string(),role:z.string(),company:z.string(),refreshedAt:z.string().nullable(),emailAvailable:z.boolean(),reason:z.string(),
+   // The accepted role criteria of the search step that found this person. Selection and enrichment
+   // verification both use it, so an alternative search cannot be judged by the first one's wording.
+   criteria:z.array(z.string()).max(16).optional(),
    // Each unmet requirement is named separately, so "not reachable" never hides WHY.
-   limitations:z.array(z.enum(['employer_unconfirmed','role_not_relevant','below_buyer_seniority','provider_data_stale','no_provider_email'])).max(5).optional()})).max(5).optional(),
+   limitations:z.array(z.enum(['employer_unconfirmed','role_not_relevant','below_buyer_seniority','provider_data_stale','no_provider_email','outside_discovery_persona','enrichment_unverified'])).max(7).optional()})).max(5).optional(),
   emailStatus: z.enum(['provider_verified','catch_all','invalid','unknown']), employmentEvidence: z.string().nullable(),
   source: z.string(), observedAt: z.string().datetime(), state: z.enum(['resolved','contact_pending','relationship_handoff']), reason: z.string() });
 export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),searchCountry:z.string().optional(),language:z.string(),discoveredAt:z.string().datetime(),providerRecord:ProviderJob.optional(),providerCompany:ProviderCompany.optional(),procurementNotice:ProcurementNotice.optional()});
@@ -58,8 +61,14 @@ export const Packet = z.object({
    countries:z.array(z.string()).max(30).optional()}).optional(),
   providerObservations:z.array(ProviderObservation).max(80).optional(),
   contextSearch:z.object({version:z.literal('kvd101'),question:z.string(),queries:z.array(z.string()),stop:z.enum(['adequate','exhausted','execution_hold']),coverage:z.enum(['unavailable','boilerplate_only','general','audience_journey','relevant'])}).optional(),
-  factResolution:z.object({status:z.enum(['match','mismatch','unresolved']),questions:z.array(z.string()),conflicts:z.array(z.string()),reused:z.array(z.string()),classification:z.array(z.string()).optional(),evidenceCanResolve:z.boolean().optional()}).optional(),
-  recovery:z.object({version:z.literal('kvd101'),reason:z.string(),stage:z.enum(['S04','S05','S06','S08','S09','S10','S11']),requestedAt:z.string(),retryUrls:z.array(z.string()).optional()}).optional(),
+  factResolution:z.object({status:z.enum(['match','mismatch','unresolved']),questions:z.array(z.string()),conflicts:z.array(z.string()),reused:z.array(z.string()),classification:z.array(z.string()).optional(),evidenceCanResolve:z.boolean().optional(),
+   // Whether a historical classification warning has actually been reassessed against acquired
+   // original evidence. `provisional` is NOT resolved and is never reported as such.
+   classificationStatus:z.enum(['none','provisional','addressed_by_evidence']).optional()}).optional(),
+  recovery:z.object({version:z.literal('kvd101'),reason:z.string(),stage:z.enum(['S04','S05','S06','S08','S09','S10','S11']),requestedAt:z.string(),retryUrls:z.array(z.string()).optional(),
+   // The selected run this recovery belongs to, so a reviewer action inside a run keeps that run's
+   // membership, persona policy and finite authority instead of falling back to campaign defaults.
+   selectedRun:z.string().uuid().nullable().optional(),origin:z.string().max(40).optional()}).optional(),
   repairs:z.array(RepairRecord).max(12).optional(),
   procurementContext:z.array(z.object({notice:ProcurementNotice,evidenceIds:z.array(z.string().uuid()),basis:z.string(),scope:z.string(),holds:z.array(z.string())})).max(5).optional(),
   contextAttempts:z.array(z.object({url:z.string().url(),stage:z.enum(['robots','page','attribution']),code:z.string().regex(/^[a-z0-9_]{1,80}$/i),status:z.number().int().optional()})).max(12).optional(),
@@ -85,13 +94,31 @@ export const Packet = z.object({
   identityResolution:z.object({from:z.string(),to:z.string(),
    basis:z.literal('first_party_redirect_with_structured_identity'),
    evidenceId:z.string(),requestedUrl:z.string(),finalUrl:z.string(),at:z.string()}).optional(),
+  // A reviewer's answer to an identity question. It is a HINT: it is verified against the company's
+  // own published identity before anything is attributed to it, and never certified by being typed.
+  identityHint:z.object({name:z.string().min(1).max(200),domain:z.string().max(253).nullable(),
+   note:z.string().max(3000),reviewerId:z.string().uuid(),at:z.string(),
+   status:z.enum(['unverified','verified','refuted']).default('unverified')}).optional(),
+  // Capture material that failed company attribution. Kept as recovery material with its reason,
+  // separate from citable evidence, instead of being discarded.
+  rejectedCaptures:z.array(z.object({url:z.string().url(),finalUrl:z.string().url(),title:z.string().max(300),
+   contentHash:z.string(),retrievedAt:z.string(),reason:z.string().max(200)})).max(8).optional(),
   // Why a company is waiting, what was already tried, and whether another round can change it.
   pendingResolution:z.object({reason:z.enum(['identity_unresolved','domain_changed','classification_conflict','no_usable_evidence','contact_unreachable']),
    detail:z.string().max(600),attempts:z.number().int().min(0).max(3),
    nextAction:z.enum(['retry_resolution','ask_reviewer','stop']),question:z.string().max(300).optional(),at:z.string()}).optional(),
-  contactPlan:z.object({attempts:z.array(z.object({key:z.string(),titles:z.array(z.string()).max(8),
+  // The authoritative persisted plan for this account's contact work: the exact request it is bound
+  // to, its steps, its reveal counter and what each attempt produced. A resume follows this plan;
+  // a changed host, role or service starts a new one instead of reusing a different question.
+  contactPlan:z.object({
+   host:z.string().max(253).optional(),role:z.string().max(300).optional(),service:z.string().max(300).optional(),
+   steps:z.array(z.object({key:z.string(),titles:z.array(z.string()).max(8)})).max(3).optional(),
+   reveals:z.number().int().min(0).max(10).optional(),
+   // Candidate found and contact resolved are different facts and are recorded separately.
+   resolvedContact:z.boolean().optional(),
+   attempts:z.array(z.object({key:z.string(),titles:z.array(z.string()).max(8),
    reason:z.string(),at:z.string(),returned:z.number().int().nonnegative(),
-   outcome:z.enum(['no_results','no_relevant_candidate','no_reachable_candidate','resolved','blocked'])})).max(3)}).optional(),
+   outcome:z.enum(['no_results','no_relevant_candidate','no_reachable_candidate','candidate_found','resolved','blocked'])})).max(3)}).optional(),
   // What the current draft was written from, so materially improved findings produce a new version.
   draftBasis:z.string().optional(),
   deferredCrm:z.object({inputHash:z.string(),analysis:CrmAnalysis,review:Review.optional()}).optional(),

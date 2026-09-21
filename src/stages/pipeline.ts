@@ -20,7 +20,7 @@ import { captureWebsite } from '../capture/specialists';
 import {draftReviewContext} from '../domain/review-context';
 import {crmInputHash,crmContext,crmReviewTarget,crmAnalysisProblems,crmReviewProblems,draftResearch,repairCrmCitations} from '../domain/crm-specialist';
 import {websiteSpecialistStep,type WebsiteTools} from './website-specialist';
-import {companyFromSelectedSource,resolutionExhausted} from '../domain/identity-resolution';
+import {companyFromSelectedSource,companyFromVerifiedHint,resolutionExhausted,companyIdentity,attributionIdentity} from '../domain/identity-resolution';
 import {firstPartyATS} from '../domain/policy';
 import {websiteInputHash,websiteReviewProblems} from '../domain/website-specialist';
 import {DiscoveryConfig,type DiscoveryGroup} from '../contracts/discovery';
@@ -126,36 +126,70 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
    }
    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:nextStage?next(job,nextStage,p):null})!==true)throw Error('ownership_lost');return;
   }
+  let sourceEvidence:Evidence|null=null;
   if(discoveryPriority(p.candidate)<0){
    // A reviewer choosing this record is a claim that a real company is behind it. Before applying
-   // the discovery-quality stop, try once to identify the employer from the page's own structured
-   // fields. This runs only for a selected run, so general discovery filtering is unchanged.
-   const reviewerSelected=p.recovery?.reason==='selected_run';
+   // the discovery-quality stop, try a bounded identification: the reviewer's own verified answer
+   // first, then the page's structured employer fields. This runs only for a selected run, so
+   // general discovery filtering is unchanged.
+   const reviewerSelected=p.recovery?.reason==='selected_run'||Boolean(p.recovery?.selectedRun);
    let identified=false;
-   if(reviewerSelected&&!p.candidate.providerCompany&&firstPartyATS(hostOf(p.candidate.url))&&!resolutionExhausted(p,1)){
-    p.pendingResolution={reason:'identity_unresolved',detail:'Reviewer-selected source; attempting employer identification from its structured fields.',
+   if(reviewerSelected&&!p.candidate.providerCompany&&!resolutionExhausted(p,2)){
+    p.pendingResolution={reason:'identity_unresolved',
+     detail:p.identityHint?`Checking the reviewer's answer (${p.identityHint.name}) against that company's own published identity.`
+      :'Reviewer-selected source; attempting employer identification from its structured fields.',
      attempts:(p.pendingResolution?.attempts??0)+1,nextAction:'retry_resolution',at:new Date().toISOString()};
-    try{
-     const e=await tools.fetchEvidence(p.candidate.url);
-     const company=companyFromSelectedSource(e,p.candidate.url);
-     if(company){
-      p.candidate.providerCompany=company;p.evidence.push(e);identified=true;
-      delete p.pendingResolution;
-      p.notes.push(`Employer identified from the selected source's own structured fields: ${company.name} (${company.domain}). Size, country and industry remain unknown.`);
-     }
-    }catch{/* the stop below reports the unresolved identity */}
+    // 1. A reviewer's typed answer is a hint. It is accepted only when the named company's OWN page
+    //    publishes that identity; typing a domain never certifies it.
+    if(p.identityHint?.domain&&p.identityHint.status==='unverified'){
+     try{
+      const hinted=await tools.fetchEvidence(`https://${p.identityHint.domain}`);
+      const company=companyFromVerifiedHint(p.identityHint,hinted);
+      if(company){
+       p.candidate.providerCompany=company;p.identityHint={...p.identityHint,status:'verified'};
+       p.evidence.push(attributeCompanyEvidence(hinted,{domain:company.domain,name:company.name},p.evidence));
+       identified=true;
+       p.notes.push(`Reviewer-identified company verified: ${company.name} publishes that identity on ${company.domain}. The answer was checked against the company's own page, not accepted on trust. Employee count, country and industry remain unknown.`);
+      }else{
+       p.identityHint={...p.identityHint,status:'refuted'};
+       p.notes.push('The reviewer-supplied website does not publish structured identity for that company name, so nothing was attributed to it. The note alone does not establish the company.');
+      }
+     }catch{p.notes.push('The reviewer-supplied website could not be read, so the answer stays unverified and nothing was attributed to it.');}
+    }
+    // 2. The selected source's own structured employer fields, revalidated against its raw data.
+    if(!identified&&firstPartyATS(hostOf(p.candidate.url))){
+     try{
+      const e=await tools.fetchEvidence(p.candidate.url);
+      sourceEvidence=e;
+      const company=companyFromSelectedSource(e,p.candidate.url);
+      if(company){
+       p.candidate.providerCompany=company;
+       p.evidence.push(attributeCompanyEvidence(e,{domain:company.domain,name:company.name},p.evidence));
+       identified=true;
+       p.notes.push(`Employer identified from the selected source's own structured fields: ${company.name} (${company.domain}). Size, country and industry remain unknown.`);
+      }
+     }catch{/* the stop below reports the unresolved identity */}
+    }
    }
-   if(!identified){
-    p.state='source_pending';
-    p.notes.push('This discovery points to a guide or general careers index. A specific attributable source is needed before paid research; company fit remains unknown.');
-    if(reviewerSelected)p.pendingResolution={reason:'identity_unresolved',
-     detail:'The selected source carries no structured employer identity, so the company behind it is unknown. No corporate domain was guessed.',
-     attempts:(p.pendingResolution?.attempts??0),nextAction:'ask_reviewer',at:new Date().toISOString(),
-     question:'Which company does this listing belong to? Give the company name and its website so research can proceed.'};
-    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw new Error('ownership_lost');return;
+   if(identified){
+    delete p.pendingResolution;
+    // The identified company now takes the ORDINARY company path: eligibility, exclusions and
+    // company context run exactly as they do for a company that arrived with an identity. The
+    // already-fetched source is reused rather than read again.
+    const ready=await collectCompanyContext(p,tools);
+    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:ready?next(job,'S06',p):null})!==true)throw Error('ownership_lost');return;
    }
+   p.state='source_pending';
+   p.notes.push('This discovery points to a guide or general careers index. A specific attributable source is needed before paid research; company fit remains unknown.');
+   if(reviewerSelected)p.pendingResolution={reason:'identity_unresolved',
+    detail:p.identityHint?.status==='refuted'
+     ?'The reviewer\'s answer could not be verified against that company\'s own published identity, and the listing carries no structured employer identity.'
+     :'The selected source carries no structured employer identity, so the company behind it is unknown. No corporate domain was guessed.',
+    attempts:(p.pendingResolution?.attempts??0),nextAction:'ask_reviewer',at:new Date().toISOString(),
+    question:'Which company does this listing belong to? Give the company name and its website so research can proceed.'};
+   if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw new Error('ownership_lost');return;
   }
-  try{p.evidence.push(await tools.fetchEvidence(p.candidate.url));}catch(error){
+  try{p.evidence.push(sourceEvidence??await tools.fetchEvidence(p.candidate.url));}catch(error){
    const reason=error instanceof Error&&/^[a-z0-9_]{1,80}$/.test(error.message)?error.message:'source_unavailable';p.state='source_pending';p.notes.push(`Original source unavailable: ${reason}. Company fit remains unknown; provider data is retained without promotion to verified evidence.`);
    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw Error('ownership_lost');return;
   }
@@ -186,7 +220,9 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
    const seen=new Set(p.evidence.flatMap(e=>[eventKey(e.url),eventKey(e.finalUrl)]));
    let added=false;
    for(const candidate of results.filter(c=>!seen.has(eventKey(c.url))&&discoveryPriority(c)>=0).slice(0,2)){
-    try{const e=attributeCompanyEvidence(await tools.fetchEvidence(candidate.url),p.candidate?.providerCompany??{domain:p.research.accountHost,name:p.research.company},p.evidence);if(e.origin==='original'&&e.accountHost===p.research.accountHost&&!seen.has(eventKey(e.finalUrl))){p.evidence.push(e);added=true;break;}}
+    try{const e=attributeCompanyEvidence(await tools.fetchEvidence(candidate.url),attributionIdentity(p,p.candidate?.providerCompany??{domain:p.research.accountHost,name:p.research.company}),p.evidence);
+     // A supported domain move keeps its evidence: either address is this company's.
+     if(e.origin==='original'&&companyIdentity(p,p.research.accountHost).hosts.includes(e.accountHost??'')&&!seen.has(eventKey(e.finalUrl))){p.evidence.push(e);added=true;break;}}
     catch(error){p.contextAttempts=[...(p.contextAttempts??[]),sourceFailure(error,candidate.url,'page')].slice(-12);}
    }
    if(added)p.research=await tools.ai.generate('A2','research_final',Research,common,{...researchInput,...context(p),prior:p.research,instruction:'Finalize using available evidence. No further tool cycle is allowed: set followUp to null.'});
@@ -261,10 +297,17 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   if(p.candidate?.procurementNotice){
    p.contact={...contactPending('Nominated procurement response route','Prepare a response packet; verify original submission instructions and supplier eligibility. No Apollo lookup.'),source:'procurement_route'};p.state='procurement_preparation';nextStage='S11';
   }else{
-  p.relationship=await tools.relationship(p.research.accountHost);
+  // A relationship or suppression attaches to the company, so every address it is known at is
+  // checked and the most restrictive answer wins. A domain move must not shed an existing owner.
+  const identity=companyIdentity(p,p.research.accountHost);
+  const statuses=await Promise.all(identity.hosts.map(h=>tools.relationship(h)));
+  p.relationship=statuses.includes('suppressed')?'suppressed':statuses.includes('handoff')?'handoff':statuses.includes('clear')?'clear':'unknown';
   if(p.relationship==='suppressed'||p.relationship==='handoff'){p.contact={...contactPending(p.research.buyerRole,'An existing relationship routes this account to its owner.'),state:'relationship_handoff'};p.state='relationship_handoff';}
   else{
-   p.contact=p.contact?.state==='resolved'?p.contact:await tools.contact(p.research.accountHost,p.research.buyerRole,p.research.company,p);p.state=p.contact.state;
+   // Contact work uses the address the company is actually reachable at, which is the resolved one
+   // when a move was supported. The provider's recorded domain is unchanged.
+   const contactHost=identity.effective??p.research.accountHost;
+   p.contact=p.contact?.state==='resolved'?p.contact:await tools.contact(contactHost,p.research.buyerRole,p.research.company,p);p.state=p.contact.state;
    if(p.draft&&p.draft.recipient!==p.contact.email){p.draft={...p.draft,recipient:p.contact.email};delete p.draftReview;delete p.writingReview;}
    // Reuse an exact checked draft when contact remains unchanged; a new recipient requires A5 again.
    if(!p.draft||!p.draftReview||reviewProblems(p.draftReview,draftResearch(p),p,JSON.stringify(p.draft)).length)nextStage='S11';

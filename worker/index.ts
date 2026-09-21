@@ -80,14 +80,17 @@ do{
        :null;
       if(['verified_free_plan','user_confirmed_free_allowance'].includes(proof.kind))allowance={remaining:limit.free_units,expiresAt:scoped?grant.expiresAt:windowExpiry??limit.expires_at??'',evidence:proof.source,verifiedFree:true};
      }catch{}
+     // The whole recorded history is handed to the adapter, which matches a saved response to the
+     // EXACT request it answered. Handing it "the newest contact search" let a response to different
+     // criteria stand in for the question actually being asked.
      const history=await opportunityProviderOperations(client,job.organization_id,job.opportunity_id!,'apollo');
-     const searches=history.filter(o=>o.state==='succeeded'&&o.operation_key?.includes(':contact_search')).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at));
      // Personas come from the campaign and A2's researched service. The intent-ICP buyer list is a
      // DISCOVERY constraint; applying it to a chosen company filtered out its own marketing director.
      const parsedPayload=Packet.safeParse(job.payload).data;
-     const intentIcpOnly=!selectedRun&&parsedPayload?.candidate?.providerCompany?.provider==='explorium';
+     const selectedJob=selectedRun||Boolean(parsedPayload?.recovery?.selectedRun);
+     const intentIcpOnly=!selectedJob&&parsedPayload?.candidate?.providerCompany?.provider==='explorium';
      const service=packet?.research?.service??parsedPayload?.research?.service??'';
-     return new ApolloContacts(operations,allowance,fetch,searches[0]?.response,{operations:history})
+     return new ApolloContacts(operations,allowance,fetch,{operations:history})
       .resolve(host,role,company,intentIcpOnly,packet,service);
     },
    });console.log(JSON.stringify({job:job.id,stage:job.stage,status:'completed'}));

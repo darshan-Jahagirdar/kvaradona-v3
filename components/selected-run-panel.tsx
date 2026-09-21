@@ -132,13 +132,45 @@ export function SelectedRunPanel({organizationId}:{organizationId:string}){
      <pre className="draft-body">{m.draft.body}</pre></details>}
     {m.sources.length>0&&<p className="footnote">Sources: {m.sources.map(s=><a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title||s.url} ↗ </a>)}</p>}
     {m.blockedReason&&<p className="error">Needs attention: {m.blockedReason}</p>}
-    {m.reviewerQuestion&&<div className="error" role="status">
-     <p><strong>One question blocks this company:</strong> {m.reviewerQuestion.question}</p>
-     <p className="footnote">{m.reviewerQuestion.detail} Automatic resolution is exhausted. Answer it
-      on the company&apos;s card using <em>Send back for research</em>; your note becomes the question
-      the next stage works from.</p></div>}
+    {m.reviewerQuestion&&<IdentityAnswerForm member={m} onDone={()=>void load(runId)}/>}
    </article>)}
    <p className="footnote">A finished step is not a finished lead. Results produced by this run are separated from reused earlier results. Sending stays disabled.</p>
   </>}
  </section>;
+}
+
+/** The one question the pipeline cannot answer for itself. The answer is structured (company name
+ *  and website) and is verified against that company's own published identity before the stage
+ *  attributes anything to it, so typing a domain here never certifies it. */
+function IdentityAnswerForm({member,onDone}:{member:MemberCard;onDone:()=>void}){
+ const [name,setName]=useState('');
+ const [domain,setDomain]=useState('');
+ const [note,setNote]=useState('');
+ const [busy,setBusy]=useState(false);
+ const [error,setError]=useState('');
+ const q=member.reviewerQuestion!;
+ const submit=async(e:React.FormEvent)=>{
+  e.preventDefault();if(busy)return;setBusy(true);setError('');
+  try{
+   const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:member.opportunityId,revision:member.currentRevision,requestKey:crypto.randomUUID(),
+     action:'identify_company',note:note.trim()||`Reviewer identified this listing as ${name.trim()} (${domain.trim()}).`,
+     draft:null,input:{name:name.trim(),domain:domain.trim()}})});
+   if(!r.ok){setError((await r.json().catch(()=>({}))).error??'The answer could not be saved.');return;}
+   onDone();
+  }catch{setError('The answer could not be saved.');}finally{setBusy(false);}
+ };
+ return <form className="error" onSubmit={submit}>
+  <p><strong>One question blocks this company:</strong> {q.question}</p>
+  <p className="footnote">{q.detail} Automatic resolution is exhausted, so this is the one thing a
+   person can settle. Your answer is checked against that company&apos;s own published identity before
+   any research is attributed to it; it is not accepted on trust and it does not supply size,
+   country or industry.</p>
+  <label>Company name <input value={name} onChange={e=>setName(e.target.value)} maxLength={200} required/></label>{' '}
+  <label>Website <input value={domain} onChange={e=>setDomain(e.target.value)} maxLength={253}
+   placeholder="example.com" required/></label>{' '}
+  <label>Why (optional) <input value={note} onChange={e=>setNote(e.target.value)} maxLength={300}/></label>{' '}
+  <button type="submit" disabled={busy||!name.trim()||!domain.trim()}>{busy?'Saving…':'Answer and resume'}</button>
+  {error&&<p className="footnote">{error}</p>}
+ </form>;
 }

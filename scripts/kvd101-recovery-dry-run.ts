@@ -29,7 +29,8 @@ for(const {id,p:original} of packets){
  const buyers=people.filter(v=>companyMatches(v.organization?.name??'',company,p)&&roleScore(v.title??'',role)>=20&&intentBuyerTitle(v.title??''));
  if(apollo&&p.research){
   // Any request or operation would fail this dry run. A saved search must be reused even with no buyer.
-  const contact=await new ApolloContacts({run:async()=>{throw Error('unexpected_provider_operation');}},null,async()=>{throw Error('unexpected_network');},apollo.response).resolve(p.research.accountHost,role,company,p.candidate?.providerCompany?.provider==='explorium',p);
+  // Reuse is matched to the exact recorded request, so the saved operation is passed as history.
+  const contact=await new ApolloContacts({run:async()=>{throw Error('unexpected_provider_operation');}},null,async()=>{throw Error('unexpected_network');},{operations:[apollo as never]}).resolve(p.research.accountHost,role,company,p.candidate?.providerCompany?.provider==='explorium',p);
   assert.equal(contact.state,'contact_pending');
  }
  if(p.providerObservations?.length&&p.research){
