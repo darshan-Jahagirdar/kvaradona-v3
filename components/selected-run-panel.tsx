@@ -104,10 +104,15 @@ export function SelectedRunPanel({organizationId}:{organizationId:string}){
   {error&&<p role="alert" className="error">{error}</p>}
 
   <details open={!view?.run}><summary>Companies ({chosen.size} selected)</summary>
-   {companies.map(c=><label key={c.opportunity_id} className="workflow-step">
-    <input type="checkbox" checked={chosen.has(c.opportunity_id)} disabled={!c.selectable||active}
+   {companies.map(c=><label key={c.opportunity_id} className="workflow-step" data-opportunity={c.opportunity_id}>
+    <input type="checkbox" value={c.opportunity_id} name="company"
+     checked={chosen.has(c.opportunity_id)} disabled={!c.selectable||active}
      onChange={e=>{const next=new Set(chosen);e.target.checked?next.add(c.opportunity_id):next.delete(c.opportunity_id);setChosen(next);}}/>
-    <span>{c.name}</span><span className="footnote">{c.host??'host unknown'} · {c.state.replaceAll('_',' ')}{c.selectable?'':' · excluded'}</span>
+    <span>{c.name}</span>
+    {/* Several saved records share a name or have none at all, so the record's own identifier is
+        shown. Choosing the wrong row would silently substitute one company for another. */}
+    <span className="footnote">{c.host??'host unknown'} · {c.state.replaceAll('_',' ')}
+     {c.selectable?'':' · excluded'} · <code>{c.opportunity_id.slice(0,8)}</code></span>
    </label>)}
   </details>
 
