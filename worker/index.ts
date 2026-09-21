@@ -1,4 +1,4 @@
-import {companyProviderOperations,opportunityProviderOperations} from '../src/persistence/saved-provider-operations';
+import {companyProviderOperations,companyContactOperations} from '../src/persistence/saved-provider-operations';
 import { randomUUID } from 'node:crypto';
 import {appendFile,mkdir} from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -83,10 +83,17 @@ do{
      // The whole recorded history is handed to the adapter, which matches a saved response to the
      // EXACT request it answered. Handing it "the newest contact search" let a response to different
      // criteria stand in for the question actually being asked.
-     const history=await opportunityProviderOperations(client,job.organization_id,job.opportunity_id!,'apollo');
+     //
+     // The history is COMPANY scoped, not opportunity scoped: the reveal ceiling is a promise about
+     // a company, so a duplicate record for the same company must not create a second authorization.
+     const parsedForHistory=Packet.safeParse(job.payload).data;
+     const contactHosts=[host,parsedForHistory?.research?.accountHost,
+      parsedForHistory?.candidate?.providerCompany?.domain,parsedForHistory?.identityResolution?.to]
+      .filter((h):h is string=>Boolean(h));
+     const history=await companyContactOperations(client,job.organization_id,contactHosts,job.opportunity_id!);
      // Personas come from the campaign and A2's researched service. The intent-ICP buyer list is a
      // DISCOVERY constraint; applying it to a chosen company filtered out its own marketing director.
-     const parsedPayload=Packet.safeParse(job.payload).data;
+     const parsedPayload=parsedForHistory;
      const selectedJob=selectedRun||Boolean(parsedPayload?.recovery?.selectedRun);
      const intentIcpOnly=!selectedJob&&parsedPayload?.candidate?.providerCompany?.provider==='explorium';
      const service=packet?.research?.service??parsedPayload?.research?.service??'';

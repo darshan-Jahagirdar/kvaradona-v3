@@ -95,16 +95,33 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
    const question=p.factResolution.questions[0],query=companyContextQueries(company,question)[0].query;
    try{
     const results=await tools.search('fact_resolution_kvd101',query,p.candidate?.country,p.candidate?.language);
-    for(const result of results.filter(r=>{const h=hostOf(r.url);return h===company.domain||h.endsWith('.'+company.domain);}).slice(0,2)){
+    // A supported domain move is this company's current address here too, not an unrelated host.
+    const hosts=companyIdentity(p,company.domain).hosts;
+    for(const result of results.filter(r=>{const h=hostOf(r.url);return hosts.some(x=>h===x||h.endsWith('.'+x));}).slice(0,2)){
      if(p.evidence.some(e=>eventKey(e.finalUrl)===eventKey(result.url)))continue;
-     try{p.evidence.push(attributeCompanyEvidence(await tools.fetchEvidence(result.url),company,p.evidence));}catch(error){p.contextAttempts=[...(p.contextAttempts??[]),sourceFailure(error,result.url,'page')].slice(-12);}
+     try{p.evidence.push(attributeCompanyEvidence(await tools.fetchEvidence(result.url),attributionIdentity(p,company),p.evidence));}catch(error){p.contextAttempts=[...(p.contextAttempts??[]),sourceFailure(error,result.url,'page')].slice(-12);}
     }
     p.factResolution=resolveCompanyFacts(p);
    }catch(error){if(!(error instanceof Error)||!['budget_paused','provider_unverified','live_disabled'].includes(error.message))throw error;p.notes.push('Targeted fact lookup awaits execution access; saved evidence is preserved.');}
   }
-  p.state=p.factResolution.status==='mismatch'?'icp_mismatch':p.factResolution.status==='unresolved'?'company_assessment_pending':'facts_resolved';
+  // A question that original evidence could answer is not a reason to end the company's workflow
+  // before any evidence exists. It proceeds into bounded company context under a PROVISIONAL fit,
+  // which is recorded as provisional and never reported as a match. A conflict, a contradicting
+  // attribute or an exclusion still stops here, and the attempt counter stops S04/S05 cycling on
+  // unchanged evidence.
+  const provisional=p.factResolution.status==='unresolved'&&p.factResolution.evidenceCanResolve===true
+   &&!p.factResolution.conflicts.length&&!resolutionExhausted(p,2);
+  if(provisional){
+   p.pendingResolution={reason:'classification_conflict',
+    detail:'A historical classification warning remains open and no campaign industry restriction can settle it. Company context is collected under a provisional fit; the warning is preserved and no attribute was certified.',
+    attempts:(p.pendingResolution?.attempts??0)+1,nextAction:'retry_resolution',at:new Date().toISOString()};
+   p.notes.push('Classification fit is provisional: research proceeds on the company\'s own evidence, and the provider warning stands until a configured restriction can judge it.');
+  }
+  p.state=p.factResolution.status==='mismatch'?'icp_mismatch'
+   :provisional?'facts_provisional'
+   :p.factResolution.status==='unresolved'?'company_assessment_pending':'facts_resolved';
   p.notes.push(...p.factResolution.questions,...p.factResolution.conflicts);
-  if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:p.factResolution.status==='match'?next(job,'S04',p):null})!==true)throw Error('ownership_lost');return;
+  if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:p.factResolution.status==='match'||provisional?next(job,'S04',p):null})!==true)throw Error('ownership_lost');return;
  }
  const procurement=p.candidate?.procurementNotice;
  if(procurement&&!supportedService(procurement.title+' '+(procurement.description??p.evidence.map(e=>e.text).join(' ')))){
@@ -134,6 +151,7 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
    // general discovery filtering is unchanged.
    const reviewerSelected=p.recovery?.reason==='selected_run'||Boolean(p.recovery?.selectedRun);
    let identified=false;
+   const attempted:string[]=[];
    if(reviewerSelected&&!p.candidate.providerCompany&&!resolutionExhausted(p,2)){
     p.pendingResolution={reason:'identity_unresolved',
      detail:p.identityHint?`Checking the reviewer's answer (${p.identityHint.name}) against that company's own published identity.`
@@ -152,9 +170,11 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
        p.notes.push(`Reviewer-identified company verified: ${company.name} publishes that identity on ${company.domain}. The answer was checked against the company's own page, not accepted on trust. Employee count, country and industry remain unknown.`);
       }else{
        p.identityHint={...p.identityHint,status:'refuted'};
+       attempted.push(`Reviewer answer "${p.identityHint.name}" (${p.identityHint.domain}): that site publishes no structured identity for the name given.`);
        p.notes.push('The reviewer-supplied website does not publish structured identity for that company name, so nothing was attributed to it. The note alone does not establish the company.');
       }
-     }catch{p.notes.push('The reviewer-supplied website could not be read, so the answer stays unverified and nothing was attributed to it.');}
+     }catch{attempted.push(`Reviewer answer (${p.identityHint.domain}): the site could not be read.`);
+      p.notes.push('The reviewer-supplied website could not be read, so the answer stays unverified and nothing was attributed to it.');}
     }
     // 2. The selected source's own structured employer fields, revalidated against its raw data.
     if(!identified&&firstPartyATS(hostOf(p.candidate.url))){
@@ -168,9 +188,10 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
        identified=true;
        p.notes.push(`Employer identified from the selected source's own structured fields: ${company.name} (${company.domain}). Size, country and industry remain unknown.`);
       }
-     }catch{/* the stop below reports the unresolved identity */}
-    }
-   }
+      else attempted.push('The listing\'s own structured data names no employer that its raw JSON-LD or issuer link actually supports.');
+     }catch(error){attempted.push(`The listing could not be read (${error instanceof Error&&/^[a-z0-9_]{1,60}$/.test(error.message)?error.message:'source_unavailable'}).`);}
+    }else if(!identified)attempted.push('The source is not a first-party applicant tracking board, so it carries no structured employer field to read.');
+   }else if(reviewerSelected&&!p.candidate.providerCompany)attempted.push('The bounded automatic identification budget for this company is already spent.');
    if(identified){
     delete p.pendingResolution;
     // The identified company now takes the ORDINARY company path: eligibility, exclusions and
@@ -186,6 +207,8 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
      ?'The reviewer\'s answer could not be verified against that company\'s own published identity, and the listing carries no structured employer identity.'
      :'The selected source carries no structured employer identity, so the company behind it is unknown. No corporate domain was guessed.',
     attempts:(p.pendingResolution?.attempts??0),nextAction:'ask_reviewer',at:new Date().toISOString(),
+    // What was actually tried, so "nothing automatic is left" is a recorded fact rather than a claim.
+    attempted:[...(p.pendingResolution?.attempted??[]),...attempted].slice(-5),
     question:'Which company does this listing belong to? Give the company name and its website so research can proceed.'};
    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw new Error('ownership_lost');return;
   }

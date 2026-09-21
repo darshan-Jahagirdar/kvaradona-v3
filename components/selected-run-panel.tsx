@@ -132,15 +132,70 @@ export function SelectedRunPanel({organizationId}:{organizationId:string}){
      <pre className="draft-body">{m.draft.body}</pre></details>}
     {m.sources.length>0&&<p className="footnote">Sources: {m.sources.map(s=><a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title||s.url} ↗ </a>)}</p>}
     {m.blockedReason&&<p className="error">Needs attention: {m.blockedReason}</p>}
-    {m.reviewerQuestion&&<IdentityAnswerForm member={m} onDone={()=>void load(runId)}/>}
+    {m.reviewerQuestion&&(m.reviewerQuestion.reason==='identity_unresolved'
+     ?<IdentityAnswerForm member={m} onDone={()=>void load(runId)}/>
+     :<ClassificationAnswerForm member={m} onDone={()=>void load(runId)}/>)}
    </article>)}
    <p className="footnote">A finished step is not a finished lead. Results produced by this run are separated from reused earlier results. Sending stays disabled.</p>
   </>}
  </section>;
 }
 
-/** The one question the pipeline cannot answer for itself. The answer is structured (company name
- *  and website) and is verified against that company's own published identity before the stage
+/** What the pipeline actually tried before asking, so a reviewer can see the question is a last
+ *  resort rather than take that on trust. */
+function AttemptedOptions({attempted}:{attempted:string[]}){
+ if(!attempted.length)return <p className="footnote">No automatic attempts were recorded for this
+  question, so treat it as open rather than exhausted.</p>;
+ return <details><summary className="footnote">What was tried automatically ({attempted.length})</summary>
+  <ul className="footnote">{attempted.map((a,i)=><li key={i}>{a}</li>)}</ul></details>;
+}
+
+/** A campaign or attribute question. Campaign eligibility is NOT overridable here: a reviewer
+ *  cannot certify an unknown attribute or widen the ICP, and a recorded exclusion stays. What a
+ *  reviewer can do is record the question research should answer, which the next stage consumes as
+ *  its research question and which resumes the affected stage under the same run authority. */
+function ClassificationAnswerForm({member,onDone}:{member:MemberCard;onDone:()=>void}){
+ const [note,setNote]=useState('');
+ const [busy,setBusy]=useState(false);
+ const [error,setError]=useState('');
+ const q=member.reviewerQuestion!;
+ // A saved draft must be sent back with the recovery request, and this card holds only a summary of
+ // it. That combination does not occur for a classification question, which is raised before any
+ // drafting; if it ever did, say so rather than submitting something that would be refused.
+ if(member.draft)return <div className="error" role="status">
+  <p><strong>One question blocks this company:</strong> {q.question}</p>
+  <p className="footnote">{q.detail}</p>
+  <AttemptedOptions attempted={q.attempted}/>
+  <p className="footnote">This company already holds a saved draft, so answer this from its own
+   review card, where the draft is sent back with the request.</p></div>;
+ const submit=async(e:React.FormEvent)=>{
+  e.preventDefault();if(busy||note.trim().length<10)return;setBusy(true);setError('');
+  try{
+   const r=await fetch('/api/review',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id:member.opportunityId,revision:member.currentRevision,requestKey:crypto.randomUUID(),
+     action:'research',note:note.trim(),draft:null})});
+   if(!r.ok){setError((await r.json().catch(()=>({}))).error??'The answer could not be saved.');return;}
+   onDone();
+  }catch{setError('The answer could not be saved.');}finally{setBusy(false);}
+ };
+ return <form className="error" onSubmit={submit}>
+  <p><strong>One question blocks this company:</strong> {q.question}</p>
+  <p className="footnote">{q.detail}</p>
+  <AttemptedOptions attempted={q.attempted}/>
+  <p className="footnote">This answer does not change eligibility. It cannot certify an unknown
+   attribute, admit a company an exclusion rules out, or widen the campaign&apos;s profile. What it
+   does is record the question the next research pass must answer, and resume the affected stage with
+   this run&apos;s membership and finite authority intact. If this company should not be worked at
+   all, reject it on its card instead.</p>
+  <label>What should research establish? <input value={note} onChange={e=>setNote(e.target.value)}
+   maxLength={300} minLength={10} required/></label>{' '}
+  <button type="submit" disabled={busy||note.trim().length<10}>{busy?'Saving…':'Record and resume'}</button>
+  {error&&<p className="footnote">{error}</p>}
+ </form>;
+}
+
+/** An identity question, and only an identity question. The answer is structured (company name and
+ *  website) and is verified against that company's own published identity before the stage
  *  attributes anything to it, so typing a domain here never certifies it. */
 function IdentityAnswerForm({member,onDone}:{member:MemberCard;onDone:()=>void}){
  const [name,setName]=useState('');
@@ -162,9 +217,10 @@ function IdentityAnswerForm({member,onDone}:{member:MemberCard;onDone:()=>void})
  };
  return <form className="error" onSubmit={submit}>
   <p><strong>One question blocks this company:</strong> {q.question}</p>
-  <p className="footnote">{q.detail} Automatic resolution is exhausted, so this is the one thing a
-   person can settle. Your answer is checked against that company&apos;s own published identity before
-   any research is attributed to it; it is not accepted on trust and it does not supply size,
+  <p className="footnote">{q.detail}</p>
+  <AttemptedOptions attempted={q.attempted}/>
+  <p className="footnote">Your answer is checked against that company&apos;s own published identity
+   before any research is attributed to it; it is not accepted on trust and it does not supply size,
    country or industry.</p>
   <label>Company name <input value={name} onChange={e=>setName(e.target.value)} maxLength={200} required/></label>{' '}
   <label>Website <input value={domain} onChange={e=>setDomain(e.target.value)} maxLength={253}

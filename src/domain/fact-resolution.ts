@@ -3,6 +3,13 @@ import type {Packet} from '../contracts/pipeline';
 import {intentIcp} from './intent-target';
 import {discoveryExcludedDomains} from './explorium-icp';
 import {companyIdentity} from './identity-resolution';
+/** Case- and punctuation-insensitive containment either way, so "Media" and "Online media and
+ *  technology news" are the same classification and "Financial services" is not. */
+const industryKey=(v:string)=>v.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+function industryMatches(configured:string,published:string){
+ const a=industryKey(configured),b=industryKey(published);
+ return Boolean(a)&&Boolean(b)&&(a===b||a.includes(b)||b.includes(a));
+}
 /** Selective eligibility resolution. Estimates remain estimates; disagreeing observations stay unresolved. */
 export function resolveCompanyFacts(p:Packet):NonNullable<Packet['factResolution']>{
  const c=p.candidate?.providerCompany;if(!c)return {status:'unresolved',questions:['Establish company identity.'],conflicts:[],reused:[]};
@@ -46,15 +53,30 @@ export function resolveCompanyFacts(p:Packet):NonNullable<Packet['factResolution
  if(accepted)reused.push(`Cohort acceptance: ${p.eligibility!.cohort}. Unknown attributes remain unknown and unverified.`);
  if(originalFacts.length)reused.push(`${originalFacts.length} original structured company facts`);
  if(observations.length)reused.push(`${observations.length} attributable saved provider fields`);
- // Reassess the historical warning against evidence that has actually been acquired. The company's
- // OWN published classification answers "does the description conflict with the requested industry";
- // a page that says nothing about it does not. Anything else stays provisional, which is not
- // resolved and is never reported as resolved.
+ // Reassess the historical warning against the APPLICABLE POLICY, not merely against the existence
+ // of an industry value. Knowing what a company publishes is not the same as it fitting this
+ // campaign: a published industry settles the warning only where a restriction is actually
+ // configured to judge it against. Where none is, the fit stays provisional and says so.
  const classifyingFact=originalFacts.find(f=>f.field==='industry');
- const addressed=classification.length>0&&Boolean(classifyingFact);
- if(addressed){
-  for(const q of classification){const i=questions.indexOf(q);if(i>=0)questions.splice(i,1);}
-  reused.push(`Historical classification warning reassessed against the company's own published industry ("${String(classifyingFact!.value).slice(0,80)}"); the provider's warning is retained as history.`);
+ const allowedIndustries=p.eligibility?.industries?.filter(v=>v.trim().length>0)??null;
+ const published=classifyingFact?String(classifyingFact.value):null;
+ const industryVerdict:'no_published_industry'|'not_configured'|'inside'|'outside'=
+  !published?'no_published_industry'
+  :!allowedIndustries?.length?'not_configured'
+  :allowedIndustries.some(a=>industryMatches(a,published))?'inside':'outside';
+ let addressed=false;
+ if(classification.length&&published){
+  if(industryVerdict==='inside'){
+   addressed=true;
+   for(const q of classification){const i=questions.indexOf(q);if(i>=0)questions.splice(i,1);}
+   reused.push(`Historical classification warning reassessed: the company publishes industry "${published.slice(0,80)}", which is inside this campaign's configured industries. The provider's warning is retained as history.`);
+  }else if(industryVerdict==='outside'){
+   // The company's own page contradicts the campaign's configured industries. That is a conflict,
+   // not a question evidence can settle, and it is never widened away.
+   conflicts.push(`The company publishes industry "${published.slice(0,80)}", which is outside this campaign's configured industries.`);
+  }else{
+   reused.push(`The company publishes industry "${published.slice(0,80)}". This campaign configures no industry restriction, so it cannot settle the provider's classification warning; fit stays provisional while research proceeds.`);
+  }
  }
  const classificationStatus=classification.length===0?'none' as const:addressed?'addressed_by_evidence' as const:'provisional' as const;
  const status=mismatch&&!conflicts.length?'mismatch':questions.length||conflicts.length?'unresolved':'match';

@@ -175,16 +175,18 @@ export class ApolloContacts {
       accepted:buyerSearchTitles(role,intentIcpOnly),reason:'Requested fresh buyer search.'}]
    :contactSearchPlan(role,service,intentIcpOnly);
 
-  // The plan, its criteria and its counters are persisted and authoritative. A resume follows the
-  // SAME plan; a changed company, service or role starts a new one rather than silently reusing
-  // answers to a different question.
-  let revealsUsed=ops.filter(o=>/:contact_enrichment/.test(o.operation_key??'')).length;
+  // The persisted plan is CONSUMED, not merely rewritten: attempts recorded for this same company,
+  // role and service carry forward, a step the provider already refused is not asked again, and the
+  // reveal counter is the larger of what the packet recorded and what the operation history shows,
+  // so a reveal whose row is not visible here still counts against the ceiling.
+  const savedPlan=packet?.contactPlan;
+  const samePlan=Boolean(savedPlan&&savedPlan.host===host&&savedPlan.role===role&&savedPlan.service===service);
+  const priorAttempts=samePlan&&savedPlan?savedPlan.attempts:[];
+  let revealsUsed=Math.max(ops.filter(o=>/:contact_enrichment/.test(o.operation_key??'')).length,
+   samePlan?savedPlan?.reveals??0:0);
   if(packet){
-   const saved=packet.contactPlan;
-   const same=Boolean(saved&&saved.host===host&&saved.role===role&&saved.service===service);
    packet.contactPlan={host,role,service,steps:plan.map(s=>({key:s.key,titles:s.titles.slice(0,8)})),
-    reveals:Math.max(revealsUsed,same?saved!.reveals??0:0),resolvedContact:false,
-    attempts:same&&saved?saved.attempts:[]};
+    reveals:revealsUsed,resolvedContact:false,attempts:priorAttempts};
   }
   const record=(step:ContactStep,returned:number,outcome:'no_results'|'no_relevant_candidate'|'no_reachable_candidate'|'candidate_found'|'blocked')=>{
    if(!packet?.contactPlan)return;
@@ -199,7 +201,56 @@ export class ApolloContacts {
   const reachable=()=>candidates.filter(c=>c.emailAvailable&&score(c)>=20&&isFresh(c.refreshedAt,90)
    &&(!intentIcpOnly||intentBuyerTitle(c.role))&&!(c.limitations??[]).includes('enrichment_unverified'));
 
+  const mark=(c:Cand,limitation:CandidateLimitation)=>{c.limitations=[...new Set([...(c.limitations??[]),limitation])] as Cand['limitations'];};
+  let lastStatus:Contact['emailStatus']|undefined;
+  /** Try the candidates that are reachable right now. `continue` means this step's candidates are
+   *  exhausted and another justified search may still help; `stop` means nothing further is
+   *  authorized, so no later search could change the outcome. */
+  const enrichReachable=async():Promise<{kind:'resolved'|'stop';contact:Contact}|{kind:'continue'}>=>{
+   for(const selected of reachable()){
+    const params=enrichmentParams(host,selected.providerId),requestHash=hash({endpoint:'people/match',params});
+    const prior=ops.find(o=>o.request_hash===requestHash);
+    let enriched;
+    if(prior&&uncertain(prior))return {kind:'stop',contact:pending('An earlier reveal for this person is unresolved; no repeat reveal.',candidates)};
+    if(prior?.state==='succeeded'){
+     if(!isFresh(prior.created_at,90)){mark(selected,'provider_data_stale');continue;}
+     const parsed=Envelope.safeParse(prior.response);
+     if(!parsed.success){mark(selected,'enrichment_unverified');continue;}
+     enriched=parsed.data;
+    }else{
+     if(held)return {kind:'stop',contact:pending('An earlier contact operation for this account has an unresolved operation; no reveal was attempted.',candidates)};
+     if(revealsUsed>=REVEAL_CEILING)return {kind:'stop',contact:pending(`This company has already used its ${REVEAL_CEILING} authorized reveals, counting attempts whose outcome is unknown. Candidates are preserved; no further reveal was attempted.`,candidates)};
+     if(!this.allowance?.verifiedFree||this.allowance.remaining<1||Date.parse(this.allowance.expiresAt)<=Date.now()||!Number.isFinite(Date.parse(this.allowance.expiresAt))||this.allowance.evidence.trim().length<20)return {kind:'stop',contact:pending('Relevant buyer candidate found. Email enrichment awaits a verified free credit allowance; no reveal attempted.',candidates)};
+     const key=revealsUsed===0?'contact_enrichment':`contact_enrichment_${revealsUsed+1}`;
+     try{enriched=await this.call(key,'people/match',params,1);}
+     catch(e){if(e instanceof Error&&/^(free_quota_unverified_or_exhausted|provider_unverified|live_disabled|budget_paused)$/.test(e.message))return {kind:'stop',contact:pending('The free enrichment allowance is unavailable or exhausted; candidate preserved.',candidates)};throw e;}
+     revealsUsed++;
+     if(packet?.contactPlan)packet.contactPlan.reveals=revealsUsed;
+    }
+    if(enriched.httpStatus!==200)return {kind:'stop',contact:pending(httpReason(enriched.httpStatus),candidates)};
+    const result=z.object({person:Person.nullable()}).safeParse(enriched.body);
+    if(!result.success||!result.data.person){mark(selected,'enrichment_unverified');continue;}
+    const person=result.data.person;let employerHost:string|null=null;
+    try{employerHost=person.organization?.primary_domain?hostOf('https://'+person.organization.primary_domain):person.organization?.website_url?hostOf(person.organization.website_url):null;}catch{}
+    const current=person.employment_history?.some(e=>e.current===true&&!e.end_date&&e.organization_id===person.organization?.id&&Boolean(e.organization_id));
+    // Verification uses the SAME accepted criteria that admitted this candidate.
+    const accepted=selected.criteria?.length?selected.criteria:fallbackCriteria;
+    const verified=person.id===selected.providerId&&employerHost===host&&companyMatches(person.organization?.name??'',company,packet)&&current&&roleScoreFor(person.title??'',accepted)>=20&&(!intentIcpOnly||intentBuyerTitle(person.title??''));
+    const email=z.string().email().safeParse(person.email);
+    const emailStatus=person.email_status==='verified'?'provider_verified':/catch.?all/i.test(person.email_status??'')?'catch_all':person.email_status==='invalid'?'invalid':'unknown';
+    lastStatus=emailStatus;
+    if(!verified||!person.name||!email.success||email.data.split('@')[1].toLowerCase()!==host||emailStatus!=='provider_verified'){mark(selected,'enrichment_unverified');continue;}
+    return {kind:'resolved',contact:{name:person.name,role:person.title!,email:email.data,emailStatus,employmentEvidence:`Apollo person ${person.id}: current employment at ${person.organization!.name} (${host}); provider reported, checked ${new Date().toISOString()}.`,source:'apollo',observedAt:prior?new Date(prior.created_at).toISOString():new Date().toISOString(),state:'resolved',reason:'Apollo reports a verified work email and matching current employment. This is provider evidence; relationship and sending approval checks still apply.',candidates}};
+   }
+   return {kind:'continue'};
+  };
+
   for(const step of plan){
+   // A step the provider already refused in this same plan is not asked again.
+   const refused=priorAttempts.find(a=>a.key===step.key&&a.outcome==='blocked');
+   if(refused&&!settledFor(hash({endpoint:'mixed_people/api_search',params:searchParams(host,step.titles)}))){
+    continue;
+   }
    const requestHash=hash({endpoint:'mixed_people/api_search',params:searchParams(host,step.titles)});
    const prior=settledFor(requestHash);
    let response:{httpStatus:number;body:unknown};
@@ -239,51 +290,19 @@ export class ApolloContacts {
    record(step,parsedStep.data.people.length,
     !parsedStep.data.people.length?'no_results':reachable().length?'candidate_found':candidates.length?'no_reachable_candidate':'no_relevant_candidate');
    if(refresh)return finish(pending('Requested fresh buyer search completed; candidates preserved. Resume contact resolution separately to check employment and verified work email.',candidates));
-   if(reachable().length)break;
+   // Enrich what this step found before moving on. If every reachable candidate so far enriches
+   // unusably, the next justified search still runs; only an unknown outcome, the reveal ceiling or
+   // a spent allowance ends the attempt.
+   if(reachable().length){
+    const attempt=await enrichReachable();
+    if(attempt.kind!=='continue')return finish(attempt.contact);
+   }
   }
   if(!candidates.length)return finish(pending(anyPeople
    ?'People were returned for this company, but none held a role relevant to the criteria searched. Alternative role searches were exhausted.'
    :'No matching people returned across the bounded search plan; company potential remains unchanged.'));
-  if(!reachable().length)return finish(pending(`Relevant people were found but none is reachable: ${candidateBlockSummary(candidates)}. Alternative role searches were exhausted; no contact was assumed.`,candidates));
-
-  const mark=(c:Cand,limitation:CandidateLimitation)=>{c.limitations=[...new Set([...(c.limitations??[]),limitation])] as Cand['limitations'];};
-  let lastStatus:Contact['emailStatus']|undefined;
-  // A settled but unusable reveal exhausts THAT PERSON, not the account. The next suitable candidate
-  // is considered within the same authorized ceiling.
-  for(const selected of reachable()){
-   const params=enrichmentParams(host,selected.providerId),requestHash=hash({endpoint:'people/match',params});
-   const prior=ops.find(o=>o.request_hash===requestHash);
-   let enriched;
-   if(prior&&uncertain(prior))return finish(pending('An earlier reveal for this person is unresolved; no repeat reveal.',candidates));
-   if(prior?.state==='succeeded'){
-    if(!isFresh(prior.created_at,90)){mark(selected,'provider_data_stale');continue;}
-    const parsed=Envelope.safeParse(prior.response);
-    if(!parsed.success){mark(selected,'enrichment_unverified');continue;}
-    enriched=parsed.data;
-   }else{
-    if(held)return finish(pending('An earlier contact operation for this account has an unresolved operation; no reveal was attempted.',candidates));
-    if(revealsUsed>=REVEAL_CEILING)return finish(pending(`This account has already used its ${REVEAL_CEILING} authorized reveals, counting attempts whose outcome is unknown. Candidates are preserved; no further reveal was attempted.`,candidates));
-    if(!this.allowance?.verifiedFree||this.allowance.remaining<1||Date.parse(this.allowance.expiresAt)<=Date.now()||!Number.isFinite(Date.parse(this.allowance.expiresAt))||this.allowance.evidence.trim().length<20)return finish(pending('Relevant buyer candidate found. Email enrichment awaits a verified free credit allowance; no reveal attempted.',candidates));
-    const key=revealsUsed===0?'contact_enrichment':`contact_enrichment_${revealsUsed+1}`;
-    try{enriched=await this.call(key,'people/match',params,1);}
-    catch(e){if(e instanceof Error&&/^(free_quota_unverified_or_exhausted|provider_unverified|live_disabled|budget_paused)$/.test(e.message))return finish(pending('The free enrichment allowance is unavailable or exhausted; candidate preserved.',candidates));throw e;}
-    revealsUsed++;
-   }
-   if(enriched.httpStatus!==200)return finish(pending(httpReason(enriched.httpStatus),candidates));
-   const result=z.object({person:Person.nullable()}).safeParse(enriched.body);
-   if(!result.success||!result.data.person){mark(selected,'enrichment_unverified');continue;}
-   const person=result.data.person;let employerHost:string|null=null;
-   try{employerHost=person.organization?.primary_domain?hostOf('https://'+person.organization.primary_domain):person.organization?.website_url?hostOf(person.organization.website_url):null;}catch{}
-   const current=person.employment_history?.some(e=>e.current===true&&!e.end_date&&e.organization_id===person.organization?.id&&Boolean(e.organization_id));
-   // Verification uses the SAME accepted criteria that admitted this candidate.
-   const accepted=selected.criteria?.length?selected.criteria:fallbackCriteria;
-   const verified=person.id===selected.providerId&&employerHost===host&&companyMatches(person.organization?.name??'',company,packet)&&current&&roleScoreFor(person.title??'',accepted)>=20&&(!intentIcpOnly||intentBuyerTitle(person.title??''));
-   const email=z.string().email().safeParse(person.email);
-   const emailStatus=person.email_status==='verified'?'provider_verified':/catch.?all/i.test(person.email_status??'')?'catch_all':person.email_status==='invalid'?'invalid':'unknown';
-   lastStatus=emailStatus;
-   if(!verified||!person.name||!email.success||email.data.split('@')[1].toLowerCase()!==host||emailStatus!=='provider_verified'){mark(selected,'enrichment_unverified');continue;}
-   return finish({name:person.name,role:person.title!,email:email.data,emailStatus,employmentEvidence:`Apollo person ${person.id}: current employment at ${person.organization!.name} (${host}); provider reported, checked ${new Date().toISOString()}.`,source:'apollo',observedAt:prior?new Date(prior.created_at).toISOString():new Date().toISOString(),state:'resolved',reason:'Apollo reports a verified work email and matching current employment. This is provider evidence; relationship and sending approval checks still apply.',candidates});
-  }
+  if(!candidates.some(c=>(c.limitations??[]).includes('enrichment_unverified')))
+   return finish(pending(`Relevant people were found but none is reachable: ${candidateBlockSummary(candidates)}. Alternative role searches were exhausted; no contact was assumed.`,candidates));
   return finish(pending(`Enrichment did not confirm the exact person, current employer, relevant role and verified work-domain email for any reachable candidate: ${candidateBlockSummary(candidates)}. No sendable recipient selected.`,candidates,lastStatus));
  }
 }

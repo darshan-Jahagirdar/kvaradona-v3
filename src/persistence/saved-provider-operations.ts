@@ -26,3 +26,30 @@ export async function companyProviderOperations(client:SupabaseClient,organizati
  ]);
  return [...new Map([...direct,...companyRows].map(row=>[row.id,row])).values()];
 }
+
+/** Apollo contact history for a COMPANY, not just one opportunity.
+ *
+ *  The reveal ceiling is a promise about a company, so a second opportunity record for the same
+ *  company must not hand out a second authorization. This collects the organization's opportunities
+ *  whose researched account host or provider-reported domain is one of the company's supported
+ *  hosts (its canonical domain and any resolved alias), and returns the apollo operations recorded
+ *  for all of them, including the current one.
+ *
+ *  Scope and its limit, stated exactly: same organization, same host or supported alias. A company
+ *  recorded under an unrelated third domain that no resolution connects is not matched, and would
+ *  still be counted separately. */
+export async function companyContactOperations(client:SupabaseClient,organizationId:string,hosts:readonly string[],opportunityId:string){
+ const distinct=[...new Set(hosts.filter(h=>/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(h)))].slice(0,4);
+ const direct=await opportunityProviderOperations(client,organizationId,opportunityId,'apollo');
+ if(!distinct.length)return direct;
+ const list=distinct.map(h=>`"${h}"`).join(',');
+ const related=await client.from('opportunities').select('id').eq('organization_id',organizationId)
+  .or(`packet->research->>accountHost.in.(${list}),packet->candidate->providerCompany->>domain.in.(${list}),packet->identityResolution->>to.in.(${list})`)
+  .limit(100);
+ if(related.error)throw Error('company_contact_history_lookup_failed');
+ // A truncated list would understate the count, and an understated ceiling authorizes spending.
+ if(related.data.length===100)throw Error('company_contact_history_incomplete');
+ const others=related.data.map(r=>r.id as string).filter(id=>id!==opportunityId);
+ const pages=await Promise.all(others.map(id=>opportunityProviderOperations(client,organizationId,id,'apollo')));
+ return [...new Map([...direct,...pages.flat()].map(row=>[row.id,row])).values()];
+}

@@ -9,10 +9,21 @@ it('preserves buyer candidates without revealing an email when free credit is un
  const h=harness([{httpStatus:200,body:{people:[candidate]}}]);const c=await h.resolver({...allowance,remaining:0}).resolve('fixture.invalid','Revenue Operations lead','Fixture Systems');
  expect(c.state).toBe('contact_pending');expect(c.email).toBeNull();expect(c.name).toBeNull();expect(c.candidates?.[0].displayName).toBe('Alex Te***r');expect(h.calls).toEqual([{key:'contact_search',units:0}]);
 });
-it('requires current employment and a verified work-domain email, using at most one enrichment',async()=>{
- for(const changed of [{},{employment_history:[{current:false,end_date:'2025-01-01',organization_id:'org-fixture'}]},{email:'alex@personal.invalid'},{email_status:'catch_all'},{id:'wrong-person'},{title:'Intern'}]){
-  const h=harness([{httpStatus:200,body:{people:[candidate]}},{httpStatus:200,body:{person:{...person,...changed}}}]);const c=await h.resolver().resolve('fixture.invalid','Revenue Operations lead','Fixture Systems');
-  expect(c.state).toBe(Object.keys(changed).length?'contact_pending':'resolved');expect(h.calls).toEqual([{key:'contact_search',units:0},{key:'contact_enrichment',units:1}]);
+it('requires current employment and a verified work-domain email, revealing each person once',async()=>{
+ // A verified match resolves on the first search and the first reveal; no alternative is needed.
+ const good=harness([{httpStatus:200,body:{people:[candidate]}},{httpStatus:200,body:{person}}]);
+ expect((await good.resolver().resolve('fixture.invalid','Revenue Operations lead','Fixture Systems')).state).toBe('resolved');
+ expect(good.calls).toEqual([{key:'contact_search',units:0},{key:'contact_enrichment',units:1}]);
+
+ // Each way the reveal can fail leaves the contact pending. That person is revealed ONCE; the
+ // remaining justified searches then run, and finding nobody new buys no further reveal.
+ for(const changed of [{employment_history:[{current:false,end_date:'2025-01-01',organization_id:'org-fixture'}]},{email:'alex@personal.invalid'},{email_status:'catch_all'},{id:'wrong-person'},{title:'Intern'}]){
+  const empty={httpStatus:200,body:{people:[]}};
+  const h=harness([{httpStatus:200,body:{people:[candidate]}},{httpStatus:200,body:{person:{...person,...changed}}},empty,empty]);
+  const c=await h.resolver().resolve('fixture.invalid','Revenue Operations lead','Fixture Systems');
+  expect(c.state).toBe('contact_pending');expect(c.email).toBeNull();
+  expect(h.calls.filter(x=>x.key.startsWith('contact_enrichment'))).toEqual([{key:'contact_enrichment',units:1}]);
+  expect(h.calls.map(x=>x.key)).toEqual(['contact_search','contact_enrichment','contact_search_alt_1','contact_search_alt_2']);
  }
 });
 it('does not treat denied access or mismatched company results as a resolved contact',async()=>{

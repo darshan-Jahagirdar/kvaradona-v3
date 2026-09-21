@@ -58,7 +58,10 @@ export const Packet = z.object({
    *  routing can proceed; it is NOT provider verification and never supplies a missing attribute value. */
   eligibility:z.object({basis:z.literal('user_accepted_cohort'),cohort:z.string().min(1).max(120),acceptedNote:z.string().min(10).max(600),
    employeeRange:z.object({min:z.number().int().nonnegative(),max:z.number().int().positive().optional()}).optional(),
-   countries:z.array(z.string()).max(30).optional()}).optional(),
+   countries:z.array(z.string()).max(30).optional(),
+   /** Industries this campaign actually restricts to. Absent means none is configured, which keeps
+    *  a classification question provisional rather than silently treating any value as a fit. */
+   industries:z.array(z.string().max(120)).max(30).optional()}).optional(),
   providerObservations:z.array(ProviderObservation).max(80).optional(),
   contextSearch:z.object({version:z.literal('kvd101'),question:z.string(),queries:z.array(z.string()),stop:z.enum(['adequate','exhausted','execution_hold']),coverage:z.enum(['unavailable','boilerplate_only','general','audience_journey','relevant'])}).optional(),
   factResolution:z.object({status:z.enum(['match','mismatch','unresolved']),questions:z.array(z.string()),conflicts:z.array(z.string()),reused:z.array(z.string()),classification:z.array(z.string()).optional(),evidenceCanResolve:z.boolean().optional(),
@@ -106,6 +109,9 @@ export const Packet = z.object({
   // Why a company is waiting, what was already tried, and whether another round can change it.
   pendingResolution:z.object({reason:z.enum(['identity_unresolved','domain_changed','classification_conflict','no_usable_evidence','contact_unreachable']),
    detail:z.string().max(600),attempts:z.number().int().min(0).max(3),
+   /** Each automatic option and what it produced, so "exhausted" is a recorded fact a reviewer can
+    *  read rather than an assertion. */
+   attempted:z.array(z.string().max(200)).max(5).optional(),
    nextAction:z.enum(['retry_resolution','ask_reviewer','stop']),question:z.string().max(300).optional(),at:z.string()}).optional(),
   // The authoritative persisted plan for this account's contact work: the exact request it is bound
   // to, its steps, its reveal counter and what each attempt produced. A resume follows this plan;

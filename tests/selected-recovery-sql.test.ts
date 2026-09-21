@@ -189,3 +189,151 @@ it('reverts proportionally: routing returns, recorded answers are kept',async()=
  expect(packet.recovery.selectedRun).toBe(RUN);
  await db2.close();
 });
+
+// ---------------------------------------------------------------------------------------------
+// A soft classification warning: from the saved state, through actual selected entry, into research.
+// ---------------------------------------------------------------------------------------------
+
+const CLASSIFY='40000000-0000-4000-8000-0000000000c3';
+const now='2026-09-21T00:00:00Z';
+/** The saved VentureBeat shape: assessment stopped with a historical description warning and no
+ *  evidence at all, so nothing had been researched when the run ended. */
+const classificationPacket={mode:'live',state:'company_assessment_pending',notes:[],evidence:[],
+ eligibility:{basis:'user_accepted_cohort',cohort:'selected run',
+  acceptedNote:'Chosen by a reviewer for this selected-company run.',employeeRange:{min:200},countries:['US']},
+ candidate:{url:'https://venturebeat.com',title:'VentureBeat',description:'Technology news',source:'explorium',
+  eventKey:'k',country:'US',language:'en',discoveredAt:now,
+  providerCompany:{provider:'explorium',id:'v'.repeat(32),kind:'provider_reported',name:'VentureBeat',
+   domain:'venturebeat.com',headquartersCountry:'united states',employees:null,employeeRange:'201-500',industry:'Media',
+   observedAt:now,sourceUrl:'https://api.explorium.ai/v2/businesses',
+   provenance:{name:'name',domain:'domain',headquartersCountry:'country_name',employees:'number_of_employees_range',industry:'naics_description'},
+   icp:{status:'unknown',reasons:['Reported headquarters is in an approved country.'],
+    unknowns:['Company description may conflict with the requested industry classification; human assessment required.'],searchCountry:'US'},
+   intent:{status:'provider_reported',reason:'topic research',topics:[{topic:'media & advertising: pardot',score:73,sourceDate:null}]}}}};
+
+it('carries the saved classification state through selected entry into bounded research',async()=>{
+ const db=await migratedDatabase();await seedRecovery(db);
+ const {runStage}=await import('../src/stages/pipeline');
+ const {Packet,Job}=await import('../src/contracts/pipeline');
+ const {randomUUID}=await import('node:crypto');
+
+ // The real entry function selects the assessment stage for this saved packet.
+ const entry=await db.query<{stage:string}>(`select private.selected_entry_stage($1::jsonb) as stage`,[JSON.stringify(classificationPacket)]);
+ expect(entry.rows[0].stage).toBe('S05');
+
+ const about={id:randomUUID(),url:'https://venturebeat.com/about',finalUrl:'https://venturebeat.com/about',
+  accountHost:'venturebeat.com',title:'About VentureBeat',contentHash:'h',retrievedAt:new Date().toISOString(),
+  publishedAt:null,source:'original_web',origin:'original',status:'unknown',
+  // A substantive page that carries NO structured industry field, which is the ordinary case.
+  text:'VentureBeat covers transformative technology for business decision makers and runs events for that audience. '.repeat(4)};
+ const candidate={url:'https://venturebeat.com/about',title:'About VentureBeat',description:'About',
+  source:'brave',eventKey:'about',country:'US',language:'en',discoveredAt:now};
+ const run=async(stage:string,packet:any)=>{
+  let output:any,next:any;
+  const job=Job.parse({id:randomUUID(),organization_id:randomUUID(),campaign_id:randomUUID(),opportunity_id:randomUUID(),
+   stage,business_key:`classify-${stage}`,input_hash:'h',input_version:1,schema_version:'1',prompt_version:'7',
+   attempt_token:randomUUID(),attempts:1,payload:packet});
+  await runStage({async rpc(_n:string,args:any){output=Packet.parse(args.p_output);next=args.p_next;return true;}},job,
+   {ai:{generate:async()=>{throw Error('unexpected_model_call');}},
+    fetchEvidence:async()=>structuredClone(about) as any,
+    search:async()=>[candidate as any],
+    relationship:async()=>'clear',contact:async()=>{throw Error('unexpected_contact');}} as any);
+  return {output,next};
+ };
+
+ // S05: evidence is retained, the warning stays open and answerable, and the company PROCEEDS.
+ const assessment=await run('S05',Packet.parse(classificationPacket));
+ expect(assessment.output.factResolution.evidenceCanResolve).toBe(true);
+ expect(assessment.output.factResolution.classificationStatus).toBe('provisional');
+ expect(assessment.output.evidence.length).toBeGreaterThan(0);
+ expect(assessment.output.state).toBe('facts_provisional');
+ expect(assessment.next).toMatchObject({stage:'S04'});
+ // Nothing was certified: the provider's warning is still recorded as an open question.
+ expect(assessment.output.factResolution.questions.join(' ')).toContain('may conflict');
+
+ // A recovery of THAT state resumes at company context, not back at the assessment it completed.
+ const resume=await db.query<{stage:string}>(`select private.selected_entry_stage($1::jsonb) as stage`,[JSON.stringify(assessment.output)]);
+ expect(resume.rows[0].stage).toBe('S04');
+
+ // S04: bounded company context runs and the company reaches research.
+ const context=await run('S04',assessment.output);
+ expect(context.output.contextSearch).toBeDefined();
+ expect(context.output.state).toBe('evidence_collected');
+ expect(context.next).toMatchObject({stage:'S06'});
+ await db.close();
+});
+
+it('stops when the company\'s own published industry contradicts the configured one',async()=>{
+ const {resolveCompanyFacts}=await import('../src/domain/fact-resolution');
+ const {Packet}=await import('../src/contracts/pipeline');
+ const {hash}=await import('../src/domain/policy');
+ const {randomUUID}=await import('node:crypto');
+ const raw=JSON.stringify({'@context':'https://schema.org','@type':'Organization',name:'VentureBeat',
+  url:'https://venturebeat.com/',industry:'Online media and technology news'});
+ const page={id:randomUUID(),url:'https://venturebeat.com/about',finalUrl:'https://venturebeat.com/about',
+  accountHost:'venturebeat.com',title:'About',text:'x'.repeat(200),contentHash:'h',
+  retrievedAt:new Date().toISOString(),publishedAt:null,source:'original_web',origin:'original',status:'unknown',
+  companyFacts:[{id:randomUUID(),field:'industry',value:'Online media and technology news',
+   statement:'Company-published structured data reports industry: Online media and technology news.',
+   sourceRef:{sourceId:'a',pointers:['/industry']}}],
+  structuredSources:[{id:'a',rawJson:raw,sourceUrl:'https://venturebeat.com/about',scriptIndex:0,contentHash:hash(raw)}]};
+ const withIndustries=(industries?:string[])=>Packet.parse({...classificationPacket,evidence:[page],
+  eligibility:{...classificationPacket.eligibility,...(industries?{industries}:{})}});
+
+ // No industry restriction is configured, so knowing the industry cannot settle the warning.
+ const unconfigured=resolveCompanyFacts(withIndustries());
+ expect(unconfigured.classificationStatus).toBe('provisional');
+ expect(unconfigured.status).toBe('unresolved');
+ expect(unconfigured.evidenceCanResolve).toBe(true);
+ expect(unconfigured.reused.join(' ')).toContain('configures no industry restriction');
+
+ // Configured and matching: the warning is settled against actual policy.
+ const inside=resolveCompanyFacts(withIndustries(['Media']));
+ expect(inside.classificationStatus).toBe('addressed_by_evidence');
+ expect(inside.status).toBe('match');
+
+ // Configured and contradicted: a conflict, which evidence cannot settle and research does not pass.
+ const outside=resolveCompanyFacts(withIndustries(['Financial services']));
+ expect(outside.conflicts.join(' ')).toContain('outside this campaign');
+ expect(outside.status).toBe('unresolved');
+ expect(outside.evidenceCanResolve).toBe(false);
+});
+
+it('answers a classification question through the real review action, without overriding eligibility',async()=>{
+ const db=await migratedDatabase();await seedRecovery(db);await seedRun(db);
+ const asked={...classificationPacket,
+  pendingResolution:{reason:'classification_conflict',detail:'Saved attributes leave an unresolved conflict.',
+   attempts:1,nextAction:'ask_reviewer',at:now,
+   question:'Does this company belong in this campaign?'}};
+ await db.query(`update public.opportunities set packet=$1,state='company_assessment_pending' where id=$2`,
+  [JSON.stringify(asked),UNIDENTIFIED]);
+ const revision=(await db.query<{revision:number}>(`select revision from public.opportunities where id=$1`,[UNIDENTIFIED])).rows[0].revision;
+
+ // The identity form's action is refused here: this is not an identity question.
+ await expect(asUser(db,user,()=>review(db,UNIDENTIFIED,revision,'50000000-0000-4000-8000-0000000000a1','identify_company',
+  'Guessing at a company.',{name:'VentureBeat',domain:'venturebeat.com'})))
+  .rejects.toThrow(/no_open_identity_question/);
+
+ // The relevant answer is the question research must settle, recorded and resumed.
+ await asUser(db,user,()=>review(db,UNIDENTIFIED,revision,'50000000-0000-4000-8000-0000000000a2','research',
+  'Establish from their own site whether they sell advertising and events to business buyers.'));
+ const job=(await jobFor(db,UNIDENTIFIED)).rows[0];
+ expect(job.stage).toBe('S04');
+ // The run's membership and finite authority are preserved.
+ expect(job.run_id).toBe(RUN);
+ expect(job.payload.recovery.reason).toBe('selected_run');
+ // The answer is consumed as the research question, not filed as an ignored note.
+ expect(job.payload.researchRequest.question).toContain('advertising and events');
+ // Eligibility is untouched: nothing was certified and the profile was not widened.
+ expect(job.payload.eligibility).toEqual(classificationPacket.eligibility);
+ expect(job.payload.candidate.providerCompany.icp.unknowns.join(' ')).toContain('may conflict');
+
+ // The same request key is idempotent and a stale revision is refused.
+ const repeat=await asUser(db,user,()=>review(db,UNIDENTIFIED,revision,'50000000-0000-4000-8000-0000000000a2','research',
+  'Establish from their own site whether they sell advertising and events to business buyers.'));
+ expect(repeat.rows[0].value.action).toBe('research');
+ expect((await db.query<{n:number}>(`select count(*)::int as n from public.jobs where opportunity_id=$1`,[UNIDENTIFIED])).rows[0].n).toBe(1);
+ await expect(asUser(db,user,()=>review(db,UNIDENTIFIED,revision,'50000000-0000-4000-8000-0000000000a3','research','Another question entirely.')))
+  .rejects.toThrow(/stale_version|recovery_in_progress/);
+ await db.close();
+});

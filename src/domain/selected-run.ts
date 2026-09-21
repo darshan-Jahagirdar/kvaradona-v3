@@ -29,8 +29,9 @@ export interface MemberCard {
  sources:{url:string;title:string;retrievedAt:string}[];
  readiness:ReturnType<typeof packetReadiness>|null;
  blockedReason:string|null;
- /** Set only once automatic resolution is exhausted: the one thing a reviewer can answer. */
- reviewerQuestion:{question:string;detail:string;reason:string}|null;
+ /** The one thing a reviewer can answer, with the automatic options that were actually tried. The
+  *  reason decides which answer the UI offers; there is no universal identity form. */
+ reviewerQuestion:{question:string;detail:string;reason:string;attempted:string[]}|null;
 }
 
 const terminalStates=new Set(['rejected','disqualified','relationship_handoff','icp_mismatch','service_mismatch','watch']);
@@ -109,7 +110,8 @@ export function selectedRunSummary(status:any){
    readiness:p?packetReadiness(p):null,
    blockedReason:failed?job.error??'blocked':null,
    reviewerQuestion:p?.pendingResolution?.nextAction==='ask_reviewer'&&p.pendingResolution.question
-    ?{question:p.pendingResolution.question,detail:p.pendingResolution.detail,reason:p.pendingResolution.reason}:null,
+    ?{question:p.pendingResolution.question,detail:p.pendingResolution.detail,reason:p.pendingResolution.reason,
+      attempted:p.pendingResolution.attempted??[]}:null,
   };
  });
  const counts={

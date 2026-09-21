@@ -272,7 +272,7 @@ it('treats a historical classification warning as answerable by evidence, not as
  expect(r.classificationStatus).toBe('provisional');
 });
 
-it('reassesses the warning against the company\'s own published classification',()=>{
+it('does not settle the warning merely because an industry value exists',()=>{
  const raw={'@context':'https://schema.org','@type':'Organization',name:'VentureBeat',
   url:'https://venturebeat.com/',industry:'Online media and technology news'};
  const page={id:randomUUID(),url:'https://venturebeat.com/about',finalUrl:'https://venturebeat.com/about',
@@ -283,10 +283,22 @@ it('reassesses the warning against the company\'s own published classification',
    sourceRef:{sourceId:'a',pointers:['/industry']}}],
   structuredSources:[source('a','https://venturebeat.com/about',raw)]};
  const r=resolveCompanyFacts(venturebeat({},[page]));
- expect(r.classificationStatus).toBe('addressed_by_evidence');
- expect(r.status).toBe('match');
- // The provider's warning is retained as history rather than deleted.
- expect(r.reused.join(' ')).toContain('retained as history');
+ // Knowing what a company publishes is not the same as it fitting this campaign. With no configured
+ // industry restriction to judge it against, the fit stays provisional and research still proceeds;
+ // the value is recorded rather than used to close the question.
+ expect(r.classificationStatus).toBe('provisional');
+ expect(r.status).toBe('unresolved');
+ expect(r.evidenceCanResolve).toBe(true);
+ expect(r.reused.join(' ')).toContain('configures no industry restriction');
+ // Judged against an actual configured restriction, it settles either way.
+ const inside=resolveCompanyFacts({...venturebeat({},[page]),
+  eligibility:{...venturebeat().eligibility!,industries:['Media']}});
+ expect(inside.classificationStatus).toBe('addressed_by_evidence');
+ expect(inside.status).toBe('match');
+ const outside=resolveCompanyFacts({...venturebeat({},[page]),
+  eligibility:{...venturebeat().eligibility!,industries:['Financial services']}});
+ expect(outside.evidenceCanResolve).toBe(false);
+ expect(outside.conflicts.join(' ')).toContain('outside this campaign');
 });
 
 it('still stops when an attribute genuinely contradicts the cohort',()=>{

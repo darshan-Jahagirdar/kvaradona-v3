@@ -19,6 +19,9 @@
 -- it against that company's own published identity before attributing anything to it; typing a
 -- domain never certifies it. Answering supersedes the open question rather than leaving it posted.
 --
+-- It also re-declares private.recovery_stage so a packet whose classification fit is provisional
+-- resumes at company context rather than at the assessment it already completed.
+--
 -- The only schema change is widening the reviews.action check constraint to admit the new action;
 -- no table, column or index is added. Exclusions, holds, accounting and sending are untouched.
 
@@ -29,6 +32,25 @@ begin;
 alter table public.reviews drop constraint reviews_action_check;
 alter table public.reviews add constraint reviews_action_check
  check(action in ('edit','recheck','defer','reject','research','resume','refresh_contact_search','identify_company','approve'));
+
+-- A company whose classification fit is provisional has already passed S05; the affected step is
+-- company context, not the assessment it just completed. Without this, a recovery of that packet
+-- would fall through to the evidence heuristic and re-enter the wrong stage.
+create or replace function private.recovery_stage(p jsonb) returns text language plpgsql immutable security invoker set search_path='' as $$
+begin
+ if p->>'state' in ('rejected','reject','disqualified','defer','deferred','watch','relationship_handoff','icp_mismatch','service_mismatch') then return null; end if;
+ if p->>'state'='research_requested' and p#>>'{recovery,stage}' in ('S04','S05','S06','S08','S09','S10','S11') then return p#>>'{recovery,stage}'; end if;
+ if p->>'state'='review_capacity_deferred' then return 'S09'; end if;
+ if p->>'state'='company_assessment_pending' then return 'S05'; end if;
+ if p->>'state' in ('company_context_pending','facts_provisional','source_pending','identity_conflict','weak_context','procurement_pending') or jsonb_array_length(coalesce(p->'evidence','[]'))=0 then return 'S04'; end if;
+ if p->'research' is null then return 'S06'; end if;
+ if p->>'state' in ('website_pending','specialist_exception','specialist_repairing') then return 'S08'; end if;
+ if p#>>'{packetReview,acceptable}' is distinct from 'true' or p->>'state'='evidence_exception' then return 'S09'; end if;
+ if p#>>'{contact,state}' is distinct from 'resolved' and p->>'state'='contact_pending' then return 'S10'; end if;
+ if p->'draft' is null or p#>>'{draftReview,acceptable}' is distinct from 'true' or p->>'state' in ('draft_exception','draft_writing_review','review_required') then return 'S11'; end if;
+ return null;
+end $$;
+revoke all on function private.recovery_stage(jsonb) from public,anon,authenticated;
 
 create or replace function private.selected_entry_stage(p jsonb) returns text
  language sql immutable security invoker set search_path='' as $$
