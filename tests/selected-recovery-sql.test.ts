@@ -318,12 +318,16 @@ it('answers a classification question through the real review action, without ov
  await asUser(db,user,()=>review(db,UNIDENTIFIED,revision,'50000000-0000-4000-8000-0000000000a2','research',
   'Establish from their own site whether they sell advertising and events to business buyers.'));
  const job=(await jobFor(db,UNIDENTIFIED)).rows[0];
- expect(job.stage).toBe('S04');
+ // The answer goes to the bounded fact resolver, which is where eligibility is decided; ordinary
+ // research would skip that check entirely.
+ expect(job.stage).toBe('S05');
  // The run's membership and finite authority are preserved.
  expect(job.run_id).toBe(RUN);
  expect(job.payload.recovery.reason).toBe('selected_run');
  // The answer is consumed as the research question, not filed as an ignored note.
  expect(job.payload.researchRequest.question).toContain('advertising and events');
+ // Answering supersedes the posted question rather than leaving it up.
+ expect(job.payload.pendingResolution.question).toBeUndefined();
  // Eligibility is untouched: nothing was certified and the profile was not widened.
  expect(job.payload.eligibility).toEqual(classificationPacket.eligibility);
  expect(job.payload.candidate.providerCompany.icp.unknowns.join(' ')).toContain('may conflict');
@@ -335,5 +339,93 @@ it('answers a classification question through the real review action, without ov
  expect((await db.query<{n:number}>(`select count(*)::int as n from public.jobs where opportunity_id=$1`,[UNIDENTIFIED])).rows[0].n).toBe(1);
  await expect(asUser(db,user,()=>review(db,UNIDENTIFIED,revision,'50000000-0000-4000-8000-0000000000a3','research','Another question entirely.')))
   .rejects.toThrow(/stale_version|recovery_in_progress/);
+ await db.close();
+});
+
+it('routes a classification answer to the fact resolver, and a contradiction cannot bypass it',async()=>{
+ const db=await migratedDatabase();await seedRecovery(db);await seedRun(db);
+ const {runStage}=await import('../src/stages/pipeline');
+ const {Packet,Job}=await import('../src/contracts/pipeline');
+ const {hash}=await import('../src/domain/policy');
+ const {randomUUID}=await import('node:crypto');
+
+ // An evidence-bearing CONTRADICTION: the provider reports the United States, the company's own
+ // structured data reports Germany. Evidence exists, so the old rule would have sent this to S06,
+ // which has no eligibility check at all.
+ const raw=JSON.stringify({'@context':'https://schema.org','@type':'Organization',name:'VentureBeat',
+  url:'https://venturebeat.com/',address:{addressCountry:'DE'}});
+ const contradicting={id:randomUUID(),url:'https://venturebeat.com/about',finalUrl:'https://venturebeat.com/about',
+  accountHost:'venturebeat.com',title:'About',text:'x'.repeat(200),contentHash:'h',
+  retrievedAt:new Date().toISOString(),publishedAt:null,source:'original_web',origin:'original',status:'unknown',
+  companyFacts:[{id:randomUUID(),field:'country',value:'DE',
+   statement:'Company-published structured data reports country: DE.',
+   sourceRef:{sourceId:'c',pointers:['/address/addressCountry']}}],
+  structuredSources:[{id:'c',rawJson:raw,sourceUrl:'https://venturebeat.com/about',scriptIndex:0,contentHash:hash(raw)}]};
+ const asked={...classificationPacket,evidence:[contradicting],
+  pendingResolution:{reason:'classification_conflict',detail:'Saved observations conflict.',attempts:1,
+   nextAction:'ask_reviewer',at:now,question:'Does this company belong in this campaign?'}};
+ await db.query(`update public.opportunities set packet=$1,state='company_assessment_pending' where id=$2`,
+  [JSON.stringify(asked),UNIDENTIFIED]);
+ const revision=(await db.query<{revision:number}>(`select revision from public.opportunities where id=$1`,[UNIDENTIFIED])).rows[0].revision;
+ await asUser(db,user,()=>review(db,UNIDENTIFIED,revision,'50000000-0000-4000-8000-0000000000b1','research',
+  'Confirm from their own site which country they are headquartered in.'));
+ const job=(await jobFor(db,UNIDENTIFIED)).rows[0];
+ // The answer goes to the resolver that decides eligibility, not past it.
+ expect(job.stage).toBe('S05');
+ expect(job.run_id).toBe(RUN);
+ // The answered question is superseded; the answer itself is recorded for the resolver.
+ expect(job.payload.pendingResolution.question).toBeUndefined();
+ expect(job.payload.pendingResolution.nextAction).toBe('retry_resolution');
+ expect(job.payload.researchRequest.question).toContain('country');
+
+ const run=async(packet:any,evidence:any[])=>{
+  let output:any,next:any;
+  const stageJob=Job.parse({id:randomUUID(),organization_id:randomUUID(),campaign_id:randomUUID(),opportunity_id:randomUUID(),
+   stage:'S05',business_key:'guard',input_hash:'h',input_version:1,schema_version:'1',prompt_version:'7',
+   attempt_token:randomUUID(),attempts:1,payload:packet});
+  await runStage({async rpc(_n:string,args:any){output=Packet.parse(args.p_output);next=args.p_next;return true;}},stageJob,
+   {ai:{generate:async()=>{throw Error('unexpected_model_call');}},
+    fetchEvidence:async()=>structuredClone(evidence[0]) as any,
+    search:async()=>[{url:'https://venturebeat.com/about',title:'About',description:'About',source:'brave',
+     eventKey:'about',country:'US',language:'en',discoveredAt:now} as any],
+    relationship:async()=>'clear',contact:async()=>{throw Error('unexpected_contact');}} as any);
+  return {output,next};
+ };
+
+ // The resolver uses the reviewer's question, and the contradiction still stops the company.
+ const guarded=await run(Packet.parse(job.payload),[contradicting]);
+ expect(guarded.output.notes.join(' ')).toContain('Reviewer question used to direct the bounded fact lookup');
+ expect(guarded.output.factResolution.conflicts.length).toBeGreaterThan(0);
+ expect(guarded.output.state).toBe('company_assessment_pending');
+ // No successor: an ordinary note did not become an eligibility override.
+ expect(guarded.next).toBeNull();
+ // The remaining question is re-posted honestly, recording that the answer was used.
+ expect(guarded.output.pendingResolution.nextAction).toBe('ask_reviewer');
+ expect(guarded.output.pendingResolution.detail).toContain('still stands');
+
+ // A SOFT question on the same route progresses: the answer is used, the fit stays provisional,
+ // and ordinary research follows.
+ const about={id:randomUUID(),url:'https://venturebeat.com/about',finalUrl:'https://venturebeat.com/about',
+  accountHost:'venturebeat.com',title:'About VentureBeat',contentHash:'h2',retrievedAt:new Date().toISOString(),
+  publishedAt:null,source:'original_web',origin:'original',status:'unknown',
+  text:'VentureBeat covers transformative technology for business decision makers. '.repeat(5)};
+ const soft=Packet.parse({...classificationPacket,evidence:[],
+  researchRequest:{question:'Establish what they sell and to whom from their own site.',requestedAt:now,reviewerId:randomUUID()},
+  pendingResolution:{reason:'classification_conflict',detail:'answered',attempts:0,nextAction:'retry_resolution',at:now}});
+ const progressed=await run(soft,[about]);
+ expect(progressed.output.notes.join(' ')).toContain('Reviewer question used to direct the bounded fact lookup');
+ expect(progressed.output.state).toBe('facts_provisional');
+ expect(progressed.output.factResolution.classificationStatus).toBe('provisional');
+ expect(progressed.next).toMatchObject({stage:'S04'});
+ await db.close();
+});
+
+it('leaves an ordinary research request on an eligible packet at its usual stage',async()=>{
+ const db=await migratedDatabase();await seedRecovery(db);await seedRun(db);
+ const revision=(await db.query<{revision:number}>(`select revision from public.opportunities where id=$1`,[RESEARCHED])).rows[0].revision;
+ await asUser(db,user,()=>review(db,RESEARCHED,revision,'50000000-0000-4000-8000-0000000000b2','research',
+  'Look again at their services path before we write.',null,researchedPacket.draft));
+ // No classification question is open and the packet is not in assessment, so routing is unchanged.
+ expect((await jobFor(db,RESEARCHED)).rows[0].stage).toBe('S06');
  await db.close();
 });

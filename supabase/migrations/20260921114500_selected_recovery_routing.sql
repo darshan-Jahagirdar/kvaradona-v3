@@ -19,6 +19,10 @@
 -- it against that company's own published identity before attributing anything to it; typing a
 -- domain never certifies it. Answering supersedes the open question rather than leaving it posted.
 --
+-- A 'research' answer to a classification or eligibility question routes to the bounded fact
+-- resolver rather than to ordinary research, so the answer is consumed where eligibility is actually
+-- decided and a contradicted packet cannot skip that check.
+--
 -- It also re-declares private.recovery_stage so a packet whose classification fit is provisional
 -- resumes at company context rather than at the assessment it already completed.
 --
@@ -100,7 +104,18 @@ begin
 
  resume_stage:=private.recovery_stage(o.packet);
  if p_action='refresh_contact_search' then resume_stage:='S10'; end if;
- if p_action='research' then resume_stage:=case when jsonb_array_length(coalesce(o.packet->'evidence','[]'))>0 then 'S06' else 'S04' end; end if;
+ if p_action='research' then
+  -- A classification or eligibility question is answered by the bounded fact resolver, not by
+  -- ordinary research. Sending it to S06 skips eligibility entirely, which has no deterministic
+  -- check; sending it to S04 stops on the same unresolved conflict before the reviewer's question is
+  -- ever used. Only the provisional or cleared case reaches ordinary research, from S05 onwards.
+  if o.packet#>>'{pendingResolution,reason}'='classification_conflict'
+     or o.packet->>'state'='company_assessment_pending' then
+   resume_stage:='S05';
+  else
+   resume_stage:=case when jsonb_array_length(coalesce(o.packet->'evidence','[]'))>0 then 'S06' else 'S04' end;
+  end if;
+ end if;
  if p_action='identify_company' then resume_stage:=coalesce(resume_stage,'S04'); end if;
  if resume_stage is null then raise exception 'recovery_not_available'; end if;
  -- An uncertain paid dispatch is never implicitly replaced, including through a new job ID.
@@ -127,7 +142,16 @@ begin
   'origin',case p_action when 'research' then 'question' when 'identify_company' then 'identity_answer' else 'missing_step' end,
   'selectedRun',run_owner,
   'stage',resume_stage,'requestedAt',now(),'retryUrls',retry_urls));
- if p_action='research' then snap:=jsonb_set(snap,'{researchRequest}',jsonb_build_object('question',p_note,'requestedAt',now(),'reviewerId',auth.uid())); end if;
+ if p_action='research' then
+  snap:=jsonb_set(snap,'{researchRequest}',jsonb_build_object('question',p_note,'requestedAt',now(),'reviewerId',auth.uid()));
+  -- The posted question is superseded the moment it is answered. The resolver re-posts whatever
+  -- genuinely remains; eligibility is untouched and a hard conflict still stops there.
+  if resume_stage='S05' and snap ? 'pendingResolution' then
+   snap:=jsonb_set(snap,'{pendingResolution}',((snap->'pendingResolution') - 'question'::text)||jsonb_build_object(
+    'nextAction','retry_resolution','attempts',0,'at',now(),
+    'detail','A reviewer answered the classification question. The bounded fact resolver uses that question; it does not change eligibility, and an unresolved conflict still stops there.'));
+  end if;
+ end if;
  if p_action='identify_company' then
   snap:=jsonb_set(snap,'{identityHint}',jsonb_build_object(
    'name',hint_name,'domain',hint_domain,'note',p_note,'reviewerId',auth.uid(),'at',now(),'status','unverified'));

@@ -91,8 +91,15 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
  if(job.stage==='S05'){
   p.factResolution=resolveCompanyFacts(p);
   const company=p.candidate?.providerCompany;
-  if(p.factResolution.status==='unresolved'&&company?.domain&&p.factResolution.questions.length&&!p.factResolution.conflicts.length){
-   const question=p.factResolution.questions[0],query=companyContextQueries(company,question)[0].query;
+  // A reviewer's answer to a classification or eligibility question is consumed HERE, where
+  // eligibility is actually decided. It directs the bounded lookup; it does not settle anything by
+  // itself, and it never changes what counts as a conflict.
+  const reviewerQuestion=p.researchRequest?.question?.trim();
+  if(p.factResolution.status==='unresolved'&&company?.domain
+     &&(p.factResolution.questions.length||reviewerQuestion)
+     &&(!p.factResolution.conflicts.length||Boolean(reviewerQuestion))){
+   const question=reviewerQuestion||p.factResolution.questions[0],query=companyContextQueries(company,question)[0].query;
+   if(reviewerQuestion)p.notes.push(`Reviewer question used to direct the bounded fact lookup: ${reviewerQuestion.slice(0,200)}`);
    try{
     const results=await tools.search('fact_resolution_kvd101',query,p.candidate?.country,p.candidate?.language);
     // A supported domain move is this company's current address here too, not an unrelated host.
@@ -120,6 +127,22 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
   p.state=p.factResolution.status==='mismatch'?'icp_mismatch'
    :provisional?'facts_provisional'
    :p.factResolution.status==='unresolved'?'company_assessment_pending':'facts_resolved';
+  if(p.state==='facts_resolved'||p.state==='facts_provisional'||p.state==='icp_mismatch'){
+   // Either the question is settled or the outcome is terminal; nothing is left to ask.
+   if(p.state!=='facts_provisional')delete p.pendingResolution;
+  }else{
+   // Something genuinely remains. Record exactly what, including when a reviewer's answer was used
+   // and did not settle it, rather than leaving a stale question or implying an override is possible.
+   const remaining=[...p.factResolution.conflicts,...p.factResolution.questions];
+   p.pendingResolution={reason:'classification_conflict',
+    detail:(reviewerQuestion
+     ?'A reviewer answered this question and the bounded lookup used it; the conflict below still stands. '
+     :'')+remaining.join(' ').slice(0,520),
+    attempts:(p.pendingResolution?.attempts??0)+1,nextAction:'ask_reviewer',at:new Date().toISOString(),
+    question:p.factResolution.conflicts.length
+     ?'Saved observations contradict each other and evidence has not settled them. Does this company belong in this campaign, or should it be rejected?'
+     :'Does this company belong in this campaign? Saved attributes leave an unresolved question that original evidence has not settled.'};
+  }
   p.notes.push(...p.factResolution.questions,...p.factResolution.conflicts);
   if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:p.factResolution.status==='match'||provisional?next(job,'S04',p):null})!==true)throw Error('ownership_lost');return;
  }
