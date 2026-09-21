@@ -39,7 +39,9 @@ export const CrmAnalysis = z.object({
 });
 export const CrmReview=Review.extend({verdicts:z.array(ClaimReview.extend({verdict:z.enum(['supported','contradicted','unverifiable'])}))});
 export const Contact = z.object({ name: z.string().nullable(), role: z.string(), email: z.string().email().nullable(),
-  candidates:z.array(z.object({providerId:z.string(),displayName:z.string(),role:z.string(),company:z.string(),refreshedAt:z.string().nullable(),emailAvailable:z.boolean(),reason:z.string()})).max(5).optional(),
+  candidates:z.array(z.object({providerId:z.string(),displayName:z.string(),role:z.string(),company:z.string(),refreshedAt:z.string().nullable(),emailAvailable:z.boolean(),reason:z.string(),
+   // Each unmet requirement is named separately, so "not reachable" never hides WHY.
+   limitations:z.array(z.enum(['employer_unconfirmed','role_not_relevant','below_buyer_seniority','provider_data_stale','no_provider_email'])).max(5).optional()})).max(5).optional(),
   emailStatus: z.enum(['provider_verified','catch_all','invalid','unknown']), employmentEvidence: z.string().nullable(),
   source: z.string(), observedAt: z.string().datetime(), state: z.enum(['resolved','contact_pending','relationship_handoff']), reason: z.string() });
 export const Candidate = z.object({url:z.string().url(),title:z.string(),description:z.string(),source:z.string(),eventKey:z.string(),country:z.string(),searchCountry:z.string().optional(),language:z.string(),discoveredAt:z.string().datetime(),providerRecord:ProviderJob.optional(),providerCompany:ProviderCompany.optional(),procurementNotice:ProcurementNotice.optional()});
@@ -56,7 +58,7 @@ export const Packet = z.object({
    countries:z.array(z.string()).max(30).optional()}).optional(),
   providerObservations:z.array(ProviderObservation).max(80).optional(),
   contextSearch:z.object({version:z.literal('kvd101'),question:z.string(),queries:z.array(z.string()),stop:z.enum(['adequate','exhausted','execution_hold']),coverage:z.enum(['unavailable','boilerplate_only','general','audience_journey','relevant'])}).optional(),
-  factResolution:z.object({status:z.enum(['match','mismatch','unresolved']),questions:z.array(z.string()),conflicts:z.array(z.string()),reused:z.array(z.string())}).optional(),
+  factResolution:z.object({status:z.enum(['match','mismatch','unresolved']),questions:z.array(z.string()),conflicts:z.array(z.string()),reused:z.array(z.string()),classification:z.array(z.string()).optional(),evidenceCanResolve:z.boolean().optional()}).optional(),
   recovery:z.object({version:z.literal('kvd101'),reason:z.string(),stage:z.enum(['S04','S05','S06','S08','S09','S10','S11']),requestedAt:z.string(),retryUrls:z.array(z.string()).optional()}).optional(),
   repairs:z.array(RepairRecord).max(12).optional(),
   procurementContext:z.array(z.object({notice:ProcurementNotice,evidenceIds:z.array(z.string().uuid()),basis:z.string(),scope:z.string(),holds:z.array(z.string())})).max(5).optional(),
@@ -76,6 +78,20 @@ export const Packet = z.object({
   draftAttempt:z.number().int().min(0).max(2).optional(),
   // The exact output a check rejected, preserved as evidence and as input for the next attempt.
   rejectedDraft:z.object({draft:z.unknown(),reason:z.string(),citableClaimIds:z.string(),at:z.string()}).optional(),
+  // The bounded contact search plan: the initial search plus at most two justified alternatives for
+  // the same company and service. Persisted so a resume reuses settled work instead of re-searching.
+  // A supported change of company domain, with the evidence that established it. Recorded so the
+  // same identity is used by attribution, contact lookup and deduplication rather than re-derived.
+  identityResolution:z.object({from:z.string(),to:z.string(),
+   basis:z.literal('first_party_redirect_with_structured_identity'),
+   evidenceId:z.string(),requestedUrl:z.string(),finalUrl:z.string(),at:z.string()}).optional(),
+  // Why a company is waiting, what was already tried, and whether another round can change it.
+  pendingResolution:z.object({reason:z.enum(['identity_unresolved','domain_changed','classification_conflict','no_usable_evidence','contact_unreachable']),
+   detail:z.string().max(600),attempts:z.number().int().min(0).max(3),
+   nextAction:z.enum(['retry_resolution','ask_reviewer','stop']),question:z.string().max(300).optional(),at:z.string()}).optional(),
+  contactPlan:z.object({attempts:z.array(z.object({key:z.string(),titles:z.array(z.string()).max(8),
+   reason:z.string(),at:z.string(),returned:z.number().int().nonnegative(),
+   outcome:z.enum(['no_results','no_relevant_candidate','no_reachable_candidate','resolved','blocked'])})).max(3)}).optional(),
   // What the current draft was written from, so materially improved findings produce a new version.
   draftBasis:z.string().optional(),
   deferredCrm:z.object({inputHash:z.string(),analysis:CrmAnalysis,review:Review.optional()}).optional(),

@@ -132,6 +132,11 @@ export function SelectedRunPanel({organizationId}:{organizationId:string}){
      <pre className="draft-body">{m.draft.body}</pre></details>}
     {m.sources.length>0&&<p className="footnote">Sources: {m.sources.map(s=><a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title||s.url} ↗ </a>)}</p>}
     {m.blockedReason&&<p className="error">Needs attention: {m.blockedReason}</p>}
+    {m.reviewerQuestion&&<div className="error" role="status">
+     <p><strong>One question blocks this company:</strong> {m.reviewerQuestion.question}</p>
+     <p className="footnote">{m.reviewerQuestion.detail} Automatic resolution is exhausted. Answer it
+      on the company&apos;s card using <em>Send back for research</em>; your note becomes the question
+      the next stage works from.</p></div>}
    </article>)}
    <p className="footnote">A finished step is not a finished lead. Results produced by this run are separated from reused earlier results. Sending stays disabled.</p>
   </>}

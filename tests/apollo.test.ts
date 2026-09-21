@@ -16,9 +16,20 @@ it('requires current employment and a verified work-domain email, using at most 
  }
 });
 it('does not treat denied access or mismatched company results as a resolved contact',async()=>{
- for(const response of [{httpStatus:403,body:{error:'unauthorized'}},{httpStatus:200,body:{people:[{...candidate,organization:{name:'Different employer'}}]}}]){
-  const h=harness([response]);const c=await h.resolver().resolve('fixture.invalid','Revenue Operations lead','Fixture Systems');expect(c.state).toBe('contact_pending');expect(c.email).toBeNull();expect(h.calls).toHaveLength(1);
- }
+ // A denied response stops immediately; no alternative can fix an unauthorized key.
+ const denied=harness([{httpStatus:403,body:{error:'unauthorized'}}]);
+ const deniedResult=await denied.resolver().resolve('fixture.invalid','Revenue Operations lead','Fixture Systems');
+ expect(deniedResult.state).toBe('contact_pending');expect(deniedResult.email).toBeNull();
+ expect(denied.calls).toHaveLength(1);
+
+ // A different employer yields no relevant candidate, so the bounded alternatives run and still
+ // resolve nobody. The search plan is capped at three attempts.
+ const mismatched={httpStatus:200,body:{people:[{...candidate,organization:{name:'Different employer'}}]}};
+ const other=harness([mismatched,mismatched,mismatched]);
+ const otherResult=await other.resolver().resolve('fixture.invalid','Revenue Operations lead','Fixture Systems');
+ expect(otherResult.state).toBe('contact_pending');expect(otherResult.email).toBeNull();
+ expect(otherResult.candidates ?? []).toHaveLength(0);
+ expect(other.calls.length).toBeLessThanOrEqual(3);
 });
 it('normalizes approved CMO and CEO titles before role relevance and seniority checks',async()=>{
  for(const title of ['CMO','Chief Marketing Officer','CEO']){

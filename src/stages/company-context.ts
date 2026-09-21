@@ -5,7 +5,7 @@ import {companyContextQueries} from '../domain/company-discovery';
 import {discoveryPriority,firstPartyATS,hostOf,eventKey,boilerplatePage,productCataloguePage} from '../domain/policy';
 import {topicRelevance} from '../domain/intent-topics';
 import {contextAdequacy} from '../domain/company-research';
-import {attributeCompanyEvidence,usableCompanyEvidence,ownedHost} from '../domain/evidence-attribution';
+import {attributeCompanyEvidence,usableCompanyEvidence,ownedHost,redirectAliasEvidence} from '../domain/evidence-attribution';
 import {resolveCompanyFacts} from '../domain/fact-resolution';
 import {sourceFailure,type SourceAttempt} from '../capture/source-error';
 export interface CompanyContextTools {
@@ -17,7 +17,17 @@ export async function collectCompanyContext(p:Packet,tools:CompanyContextTools):
  const c=p.candidate!.providerCompany!;
  p.factResolution=resolveCompanyFacts(p);
  if(p.factResolution.status==='mismatch'){p.state='icp_mismatch';p.notes.push('Saved attributes place this company outside the current target; no exact-count enrichment is needed.');return false;}
- if(p.factResolution.status==='unresolved'){p.state='company_assessment_pending';p.notes.push(...p.factResolution.questions,...p.factResolution.conflicts);return false;}
+ if(p.factResolution.status==='unresolved'&&!p.factResolution.evidenceCanResolve){
+  p.state='company_assessment_pending';p.notes.push(...p.factResolution.questions,...p.factResolution.conflicts);
+  p.pendingResolution={reason:'classification_conflict',attempts:(p.pendingResolution?.attempts??0),
+   detail:[...p.factResolution.questions,...p.factResolution.conflicts].join(' '),
+   nextAction:'ask_reviewer',at:new Date().toISOString(),
+   question:'Does this company belong in this campaign? Saved attributes leave an unresolved conflict that original evidence cannot settle.'};
+  return false;}
+ if(p.factResolution.status==='unresolved'){
+  // Every open item is a classification question. Collect original evidence first and judge fit on
+  // what the company actually publishes; the historical warning is preserved either way.
+  p.notes.push(...p.factResolution.questions,'Classification question retained; original company evidence is collected before deciding fit.');}
  if(!c.domain){p.state='company_context_pending';return false;}
  const valid=(e:Evidence)=>usableCompanyEvidence(e,c,p.evidence);
  // Legal boilerplate attributes to the company but researches nothing, so it may not end retrieval or stand in for context.
@@ -29,7 +39,7 @@ export async function collectCompanyContext(p:Packet,tools:CompanyContextTools):
  p.evidence=[...new Map([...p.evidence,...saved].map(e=>[e.id,e])).values()];
  const seen=new Set(p.evidence.filter(valid).map(e=>eventKey(e.finalUrl)));
  for(const a of p.contextAttempts??[])if(/403|robots_disallowed|unsafe/.test(a.code)&&!p.recovery?.retryUrls?.includes(a.url))seen.add(eventKey(a.url));
- const plan=companyContextQueries(c,p.researchRequest?.question),queries:string[]=[];
+ const plan=companyContextQueries(c,p.researchRequest?.question,p.candidate?.description??''),queries:string[]=[];
  const finish=(stop:'adequate'|'exhausted'|'execution_hold')=>{
   const coverage=contextAdequacy(p).coverage;p.contextSearch={version:'kvd101',question:plan[0].question,queries,stop,coverage};
   const ready=p.evidence.some(substantive);p.state=ready?'evidence_collected':'company_context_pending';
@@ -39,7 +49,13 @@ export async function collectCompanyContext(p:Packet,tools:CompanyContextTools):
  if(contextAdequacy(p).adequate&&!p.researchRequest)return finish('adequate');
  let reads=0;
  const read=async(url:string)=>{const key=eventKey(url);if(reads>=4||seen.has(key))return;seen.add(key);reads++;
-  try{const e=attributeCompanyEvidence(await tools.fetchEvidence(url,record),c,p.evidence);if(valid(e)){if(!p.evidence.some(v=>eventKey(v.finalUrl)===eventKey(e.finalUrl)&&v.contentHash===e.contentHash))p.evidence.push(e);seen.add(eventKey(e.finalUrl));}else record({url,stage:'attribution',code:'company_identity_unresolved'});}
+  try{const fetched=await tools.fetchEvidence(url,record);
+   // Record a supported domain change once, with the evidence that established it, so identity is
+   // resolved rather than rediscovered on every later stage.
+   const alias=redirectAliasEvidence(fetched,c);
+   if(alias&&!p.identityResolution){p.identityResolution={...alias,at:new Date().toISOString()};
+    p.notes.push(`Company domain resolved: ${alias.from} redirects to ${alias.to}, and that page carries ${c.name}'s own structured identity. Both signals were required.`);}
+   const e=attributeCompanyEvidence(fetched,c,p.evidence);if(valid(e)){if(!p.evidence.some(v=>eventKey(v.finalUrl)===eventKey(e.finalUrl)&&v.contentHash===e.contentHash))p.evidence.push(e);seen.add(eventKey(e.finalUrl));}else record({url,stage:'attribution',code:'company_identity_unresolved'});}
   catch(error){record(sourceFailure(error,url,'page'));}};
  const rank=(r:z.infer<typeof Candidate>)=>topicRelevance(r.title+' '+r.description,c)*30+(/implementation|migration|rollout|initiative|project|launch|hiring|integration|redesign/i.test(r.title+' '+r.description)?10:0)+(firstPartyATS(hostOf(r.url))?5:0)-(boilerplatePage(r.url,r.title)?60:0)-(productCataloguePage(r.url,r.title)?15:0);
  for(const [i,pass] of plan.entries()){

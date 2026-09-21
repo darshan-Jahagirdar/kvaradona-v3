@@ -62,11 +62,12 @@ do{
      const {data:limit,error}=await client.from('provider_limits').select('free_units,expires_at,evidence').eq('provider','apollo').single();if(error)throw new Error('contact_limit_read_failed');
      // A selected job draws its contact authority from its OWN run window; a discovery job keeps the
      // campaign window. The two never lend each other time, matching reserve_operation.
-     let runExpiry:string|null=null;
+     let runExpiry:string|null=null,selectedRun=false;
      if(job.run_id){
       const run=await client.from('workflow_runs').select('mode,status,expires_at').eq('id',job.run_id).eq('organization_id',job.organization_id).single();
       if(run.error)throw Error('contact_run_read_failed');
-      if(run.data.mode==='selected'&&run.data.status==='active')runExpiry=run.data.expires_at;
+      selectedRun=run.data.mode==='selected';
+      if(selectedRun&&run.data.status==='active')runExpiry=run.data.expires_at;
      }
      const campaign=await client.from('campaigns').select('profile').eq('id',job.campaign_id).eq('organization_id',job.organization_id).single();if(campaign.error)throw Error('contact_campaign_read_failed');
      const campaignExpiry=job.run_id?null:campaign.data.profile?.contactExecutionExpiresAt;
@@ -81,7 +82,13 @@ do{
      }catch{}
      const history=await opportunityProviderOperations(client,job.organization_id,job.opportunity_id!,'apollo');
      const searches=history.filter(o=>o.state==='succeeded'&&o.operation_key?.includes(':contact_search')).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at));
-     return new ApolloContacts(operations,allowance,fetch,searches[0]?.response,{operations:history}).resolve(host,role,company,Packet.safeParse(job.payload).data?.candidate?.providerCompany?.provider==='explorium',packet);
+     // Personas come from the campaign and A2's researched service. The intent-ICP buyer list is a
+     // DISCOVERY constraint; applying it to a chosen company filtered out its own marketing director.
+     const parsedPayload=Packet.safeParse(job.payload).data;
+     const intentIcpOnly=!selectedRun&&parsedPayload?.candidate?.providerCompany?.provider==='explorium';
+     const service=packet?.research?.service??parsedPayload?.research?.service??'';
+     return new ApolloContacts(operations,allowance,fetch,searches[0]?.response,{operations:history})
+      .resolve(host,role,company,intentIcpOnly,packet,service);
     },
    });console.log(JSON.stringify({job:job.id,stage:job.stage,status:'completed'}));
   }catch(error){

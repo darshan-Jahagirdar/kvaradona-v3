@@ -30,12 +30,21 @@ export function resolveCompanyFacts(p:Packet):NonNullable<Packet['factResolution
  else if(!countries.some(approved)&&(countries.length>0||!accepted))questions.push(countries.length
   ?'Reported headquarters is outside the approved countries for this cohort; acceptance does not override contradicting data.'
   :'Verify headquarters or relevant operating geography against approved countries.');
- if(!c.industry&&!fields.some(o=>o.field==='industry')&&!accepted)questions.push('Resolve missing industry classification.');
- for(const q of c.icp.unknowns)if(/conflict|description/i.test(q))questions.push(q);
+ if(!c.industry&&!fields.some(o=>o.field==='industry')&&!accepted){questions.push('Resolve missing industry classification.');}
+ // A provider's historical description warning is a QUESTION about classification, not a finding
+ // that the company is out of scope. It is preserved and reported, but it is answerable by original
+ // evidence, so it must not end the company's workflow before any research has happened.
+ const classification:string[]=[];
+ for(const q of c.icp.unknowns)if(/conflict|description/i.test(q)){questions.push(q);classification.push(q);}
  if(!c.domain)questions.push('Resolve company domain.');
  if(c.domain&&discoveryExcludedDomains.some(d=>c.domain===d||c.domain!.endsWith('.'+d)))mismatch=true;
  if(accepted)reused.push(`Cohort acceptance: ${p.eligibility!.cohort}. Unknown attributes remain unknown and unverified.`);
  if(originalFacts.length)reused.push(`${originalFacts.length} original structured company facts`);
  if(observations.length)reused.push(`${observations.length} attributable saved provider fields`);
- return {status:mismatch&&!conflicts.length?'mismatch':questions.length||conflicts.length?'unresolved':'match',questions:mismatch&&!conflicts.length?[]:questions,conflicts,reused};
+ const status=mismatch&&!conflicts.length?'mismatch':questions.length||conflicts.length?'unresolved':'match';
+ const open=mismatch&&!conflicts.length?[]:questions;
+ // Answerable by evidence when nothing contradicts the cohort and every open item is a
+ // classification question. A conflict or a contradicting attribute is not answerable this way.
+ const evidenceCanResolve=status==='unresolved'&&!conflicts.length&&open.length>0&&open.every(q=>classification.includes(q));
+ return {status,questions:open,conflicts,reused,classification,evidenceCanResolve};
 }

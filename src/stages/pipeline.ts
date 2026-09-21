@@ -20,6 +20,8 @@ import { captureWebsite } from '../capture/specialists';
 import {draftReviewContext} from '../domain/review-context';
 import {crmInputHash,crmContext,crmReviewTarget,crmAnalysisProblems,crmReviewProblems,draftResearch,repairCrmCitations} from '../domain/crm-specialist';
 import {websiteSpecialistStep,type WebsiteTools} from './website-specialist';
+import {companyFromSelectedSource,resolutionExhausted} from '../domain/identity-resolution';
+import {firstPartyATS} from '../domain/policy';
 import {websiteInputHash,websiteReviewProblems} from '../domain/website-specialist';
 import {DiscoveryConfig,type DiscoveryGroup} from '../contracts/discovery';
 import type {ProcurementNotice} from '../contracts/procurement';
@@ -124,8 +126,34 @@ export async function runStage(store:Store,job:Job,tools:StageTools){
    }
    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:nextStage?next(job,nextStage,p):null})!==true)throw Error('ownership_lost');return;
   }
-  if(discoveryPriority(p.candidate)<0){p.state='source_pending';p.notes.push('This discovery points to a guide or general careers index. A specific attributable source is needed before paid research; company fit remains unknown.');
-   if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw new Error('ownership_lost');return;
+  if(discoveryPriority(p.candidate)<0){
+   // A reviewer choosing this record is a claim that a real company is behind it. Before applying
+   // the discovery-quality stop, try once to identify the employer from the page's own structured
+   // fields. This runs only for a selected run, so general discovery filtering is unchanged.
+   const reviewerSelected=p.recovery?.reason==='selected_run';
+   let identified=false;
+   if(reviewerSelected&&!p.candidate.providerCompany&&firstPartyATS(hostOf(p.candidate.url))&&!resolutionExhausted(p,1)){
+    p.pendingResolution={reason:'identity_unresolved',detail:'Reviewer-selected source; attempting employer identification from its structured fields.',
+     attempts:(p.pendingResolution?.attempts??0)+1,nextAction:'retry_resolution',at:new Date().toISOString()};
+    try{
+     const e=await tools.fetchEvidence(p.candidate.url);
+     const company=companyFromSelectedSource(e,p.candidate.url);
+     if(company){
+      p.candidate.providerCompany=company;p.evidence.push(e);identified=true;
+      delete p.pendingResolution;
+      p.notes.push(`Employer identified from the selected source's own structured fields: ${company.name} (${company.domain}). Size, country and industry remain unknown.`);
+     }
+    }catch{/* the stop below reports the unresolved identity */}
+   }
+   if(!identified){
+    p.state='source_pending';
+    p.notes.push('This discovery points to a guide or general careers index. A specific attributable source is needed before paid research; company fit remains unknown.');
+    if(reviewerSelected)p.pendingResolution={reason:'identity_unresolved',
+     detail:'The selected source carries no structured employer identity, so the company behind it is unknown. No corporate domain was guessed.',
+     attempts:(p.pendingResolution?.attempts??0),nextAction:'ask_reviewer',at:new Date().toISOString(),
+     question:'Which company does this listing belong to? Give the company name and its website so research can proceed.'};
+    if(await store.rpc('complete_job',{p_job:job.id,p_token:job.attempt_token,p_output:p,p_next:null})!==true)throw new Error('ownership_lost');return;
+   }
   }
   try{p.evidence.push(await tools.fetchEvidence(p.candidate.url));}catch(error){
    const reason=error instanceof Error&&/^[a-z0-9_]{1,80}$/.test(error.message)?error.message:'source_unavailable';p.state='source_pending';p.notes.push(`Original source unavailable: ${reason}. Company fit remains unknown; provider data is retained without promotion to verified evidence.`);

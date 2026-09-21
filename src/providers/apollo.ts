@@ -48,6 +48,59 @@ function buyerSearchTitles(role:string,intentOnly:boolean){
  if(contactTitles(role).some(t=>t.includes('marketing')))return ['marketing','digital','growth'];
  return [...intentIcp.buyerTitles,'Chief Marketing Officer','Chief Executive Officer','Vice President Marketing','Vice President Sales','Head of Sales'];
 }
+
+/** The bounded search plan for one company and service: the roles A2 asked for, then at most two
+ *  MEANINGFULLY different alternatives. Each alternative must add titles the earlier attempts did
+ *  not already search, so a resume never re-buys the same question. */
+export function contactSearchPlan(role:string,service:string){
+ const base=contactTitles(role);
+ const text=`${role} ${service}`.toLowerCase();
+ const web=/website|web |cro|conversion|journey|seo|aeo|search|content|digital experience/.test(text);
+ const alternatives:{titles:string[];reason:string}[]=[];
+ // 1. The people who own the work itself, rather than the function that sponsors it.
+ alternatives.push(web
+  ?{titles:['web','website','demand generation','lifecycle','content','product marketing'],
+    reason:'The first search covered the sponsoring function. This one looks for the people who own the web and demand surfaces the offer is about.'}
+  :{titles:['revenue operations','marketing operations','business systems','demand generation'],
+    reason:'The first search covered the sponsoring function. This one looks for the operations owners of the proposed work.'});
+ // 2. A named accountable owner, for a small company where the function may not be staffed.
+ alternatives.push({titles:['head of marketing','marketing director','chief marketing officer','founder','managing director','chief executive officer'],
+  reason:'No reachable owner of the function was found, so this looks for the named senior owner a smaller company would route this to.'});
+ const seen=new Set(base.map(t=>t.toLowerCase()));
+ const plan=[{titles:base,reason:'Roles derived from the campaign and the researched service.'}];
+ for(const alt of alternatives){
+  const fresh=alt.titles.filter(t=>!seen.has(t.toLowerCase()));
+  if(!fresh.length)continue;
+  for(const t of fresh)seen.add(t.toLowerCase());
+  plan.push({titles:fresh,reason:alt.reason});
+ }
+ return plan.slice(0,3);
+}
+
+/** Why this person cannot be used, stated per requirement rather than as one opaque refusal. */
+export function candidateLimitations(p:{title:string|null;has_email?:boolean;last_refreshed_at?:string|null;organization:{name:string}|null},
+ role:string,company:string,packet?:Packet){
+ const limitations:string[]=[];
+ if(!p.organization||!companyMatches(p.organization.name,company,packet))limitations.push('employer_unconfirmed');
+ const score=roleScore(p.title??'',role);
+ if(score<=0)limitations.push('role_not_relevant');
+ else if(score<20)limitations.push('below_buyer_seniority');
+ if(!isFresh(p.last_refreshed_at??null,90))limitations.push('provider_data_stale');
+ if(p.has_email!==true)limitations.push('no_provider_email');
+ return limitations as ('employer_unconfirmed'|'role_not_relevant'|'below_buyer_seniority'|'provider_data_stale'|'no_provider_email')[];
+}
+
+const limitationText:Record<string,string>={
+ employer_unconfirmed:'the provider does not place them at this company',
+ role_not_relevant:'their title does not match the researched service',
+ below_buyer_seniority:'their title is relevant but below the buyer seniority this offer needs',
+ provider_data_stale:'the provider record is older than 90 days',
+ no_provider_email:'the provider reports no work email for them',
+};
+/** One sentence naming exactly which requirement each preserved candidate fails. */
+export function candidateBlockSummary(candidates:{displayName:string;role:string;limitations?:readonly string[]}[]){
+ return candidates.map(c=>`${c.displayName} (${c.role}): ${(c.limitations??[]).map(l=>limitationText[l]??l).join('; ')||'no recorded limitation'}`).join(' · ');
+}
 export interface FreeContactAllowance {remaining:number;expiresAt:string;evidence:string;verifiedFree:boolean;}
 export type ContactOperations=Pick<OperationGateway,'run'>;
 export async function callApollo(operations:ContactOperations,request:typeof fetch,key:string,path:string,params:Record<string,string|string[]>,units:number){
@@ -65,7 +118,7 @@ export class ApolloContacts {
  constructor(private operations:ContactOperations,private allowance:FreeContactAllowance|null,private request:typeof fetch=fetch,private savedSearch?:unknown,private history:{operations:SavedOperation[]}={operations:[]}){}
  private call(key:string,path:string,params:Record<string,string|string[]>,units:number){return callApollo(this.operations,this.request,key,path,params,units);}
 
- async resolve(host:string,role:string,company:string,intentIcpOnly=false,packet?:Packet):Promise<Contact>{
+ async resolve(host:string,role:string,company:string,intentIcpOnly=false,packet?:Packet,service=''):Promise<Contact>{
   if(!/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host))throw new Error('invalid_account_domain');
   const pending=(reason:string,candidates:Contact['candidates']=[]):Contact=>({...contactPending(role,reason),source:'apollo',candidates});
   const refresh=packet?.contactSearchRequest&&!packet.contactSearchRequest.completedAt?packet.contactSearchRequest:null;
@@ -75,17 +128,59 @@ export class ApolloContacts {
   if(priorRefresh&&(priorRefresh.state!=='succeeded'||priorRefresh.actual_usd===null))return pending('The requested contact search has an unresolved operation; no automatic redispatch.');
   const saved=Envelope.safeParse(refresh?priorRefresh?.response:this.savedSearch),savedPeople=saved.success&&saved.data.httpStatus===200?Search.safeParse(saved.data.body):null;
   const reusable=savedPeople?.success;
-  let response;
-  try{response=reusable&&saved.success?saved.data:await this.call(searchKey,'mixed_people/api_search',{'q_organization_domains_list[]':[host],'person_titles[]':buyerSearchTitles(role,intentIcpOnly),include_similar_titles:'true',page:'1',per_page:'25'},0);}
-  catch(e){if(e instanceof Error&&/^(provider_unverified|live_disabled|budget_paused)$/.test(e.message))return pending('Apollo search is not enabled within the current verified limits.');throw e;}
-  if(refresh&&packet?.contactSearchRequest)packet.contactSearchRequest.completedAt=new Date().toISOString();
-  if(response.httpStatus!==200)return pending(httpReason(response.httpStatus));
-  const parsed=Search.safeParse(response.body);if(!parsed.success)return pending('Apollo search returned an unrecognized response; no contact assumed.');
-  const candidates=parsed.data.people.filter(p=>p.organization&&companyMatches(p.organization.name,company,packet)&&roleScore(p.title??'',role)>0&&(!intentIcpOnly||intentBuyerTitle(p.title??''))).sort((a,b)=>roleScore(b.title??'',role)-roleScore(a.title??'',role)||Number(b.has_email&&isFresh(b.last_refreshed_at??null,90))-Number(a.has_email&&isFresh(a.last_refreshed_at??null,90))).slice(0,5).map(p=>({providerId:p.id,displayName:[p.first_name,p.last_name_obfuscated].filter(Boolean).join(' ')||'Name withheld',role:p.title??role,company:p.organization!.name,refreshedAt:p.last_refreshed_at??null,emailAvailable:p.has_email===true,reason:'Provider-reported role/company match. Partial name and email availability do not establish an address or verified current employment.'}));
-  if(!candidates.length)return pending(parsed.data.people.length?'Search results did not establish a matching current company and relevant role.':'No matching people returned in this bounded search; company potential remains unchanged.');
-  if(refresh)return pending('Requested fresh buyer search completed; candidates preserved. Resume contact resolution separately to check employment and verified work email.',candidates);
+  // The plan is persisted, so a resume reuses settled searches instead of re-buying them.
+  const plan=refresh?[{titles:buyerSearchTitles(role,intentIcpOnly),reason:'Requested fresh buyer search.'}]
+   :contactSearchPlan(role,service);
+  if(packet&&!packet.contactPlan)packet.contactPlan={attempts:[]};
+  const record=(key:string,titles:string[],reason:string,returned:number,outcome:'no_results'|'no_relevant_candidate'|'no_reachable_candidate'|'resolved'|'blocked')=>{
+   if(!packet?.contactPlan)return;
+   packet.contactPlan.attempts=[...packet.contactPlan.attempts.filter(a=>a.key!==key),
+    {key,titles:titles.slice(0,8),reason,at:new Date().toISOString(),returned,outcome}].slice(-3);
+  };
+
+  let candidates:NonNullable<Contact['candidates']>=[],anyPeople=false,lastKey=searchKey;
+  for(const [index,step] of plan.entries()){
+   // Stable, distinct keys: the same question always reuses its settled operation, and a genuinely
+   // different question is a separate operation rather than a silent repeat.
+   const key=refresh?searchKey:index===0?'contact_search':`contact_search_alt_${index}`;
+   lastKey=key;
+   const priorAttempt=this.history.operations.find(o=>o.operation_key?.endsWith(':'+key));
+   if(priorAttempt&&(priorAttempt.state!=='succeeded'||priorAttempt.actual_usd===null))
+    return pending('An earlier contact search for this company has an unresolved operation; no automatic redispatch.',candidates);
+   const savedForKey=index===0&&!refresh?saved:Envelope.safeParse(priorAttempt?.response);
+   const reusableForKey=savedForKey.success&&savedForKey.data.httpStatus===200&&Search.safeParse(savedForKey.data.body).success;
+   let response;
+   try{response=reusableForKey&&savedForKey.success?savedForKey.data
+    :await this.call(key,'mixed_people/api_search',{'q_organization_domains_list[]':[host],'person_titles[]':step.titles,include_similar_titles:'true',page:'1',per_page:'25'},0);}
+   catch(e){if(e instanceof Error&&/^(provider_unverified|live_disabled|budget_paused)$/.test(e.message)){
+    record(key,step.titles,step.reason,0,'blocked');
+    return pending('Apollo search is not enabled within the current verified limits.',candidates);}throw e;}
+   if(response.httpStatus!==200){record(key,step.titles,step.reason,0,'blocked');return pending(httpReason(response.httpStatus),candidates);}
+   const parsedStep=Search.safeParse(response.body);
+   if(!parsedStep.success){record(key,step.titles,step.reason,0,'blocked');return pending('Apollo search returned an unrecognized response; no contact assumed.',candidates);}
+   anyPeople=anyPeople||parsedStep.data.people.length>0;
+   // Everyone the provider actually places at this company is kept, with their limitations named.
+   // A junior or email-less person stays visible; they are never promoted to a resolved contact.
+   const found=parsedStep.data.people
+    .filter(p=>p.organization&&companyMatches(p.organization.name,company,packet)&&roleScore(p.title??'',role)>0)
+    .map(p=>({providerId:p.id,displayName:[p.first_name,p.last_name_obfuscated].filter(Boolean).join(' ')||'Name withheld',
+     role:p.title??role,company:p.organization!.name,refreshedAt:p.last_refreshed_at??null,emailAvailable:p.has_email===true,
+     limitations:candidateLimitations(p,role,company,packet),
+     reason:'Provider-reported role/company match. Partial name and email availability do not establish an address or verified current employment.'}));
+   for(const f of found)if(!candidates.some(c=>c.providerId===f.providerId))candidates.push(f);
+   candidates=candidates.sort((a,b)=>roleScore(b.role,role)-roleScore(a.role,role)
+    ||Number(b.emailAvailable&&isFresh(b.refreshedAt,90))-Number(a.emailAvailable&&isFresh(a.refreshedAt,90))).slice(0,5);
+   const reachable=candidates.find(c=>c.emailAvailable&&roleScore(c.role,role)>=20&&isFresh(c.refreshedAt,90));
+   record(key,step.titles,step.reason,parsedStep.data.people.length,
+    !parsedStep.data.people.length?'no_results':reachable?'resolved':candidates.length?'no_reachable_candidate':'no_relevant_candidate');
+   if(refresh)return pending('Requested fresh buyer search completed; candidates preserved. Resume contact resolution separately to check employment and verified work email.',candidates);
+   if(reachable)break;
+  }
+  if(!candidates.length)return pending(anyPeople
+   ?'People were returned for this company, but none held a role relevant to the researched service. Alternative role searches were exhausted.'
+   :'No matching people returned across the bounded search plan; company potential remains unchanged.');
   const selected=candidates.find(c=>c.emailAvailable&&roleScore(c.role,role)>=20&&isFresh(c.refreshedAt,90));
-  if(!selected)return pending('Candidates need a current relevant buyer role and sufficiently recent provider data before email enrichment.',candidates);
+  if(!selected)return pending(`Relevant people were found but none is reachable: ${candidateBlockSummary(candidates)}. Alternative role searches were exhausted; no contact was assumed.`,candidates);
   const params=enrichmentParams(host,selected.providerId),requestHash=hash({endpoint:'people/match',params});
   const priorReveal=this.history.operations.find(o=>o.request_hash===requestHash&&o.provider==='apollo');
   if(priorReveal&&(priorReveal.state!=='succeeded'||priorReveal.actual_usd===null))return pending('An earlier reveal for this person is unresolved; no repeat reveal.',candidates);

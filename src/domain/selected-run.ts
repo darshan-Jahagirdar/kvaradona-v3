@@ -29,6 +29,8 @@ export interface MemberCard {
  sources:{url:string;title:string;retrievedAt:string}[];
  readiness:ReturnType<typeof packetReadiness>|null;
  blockedReason:string|null;
+ /** Set only once automatic resolution is exhausted: the one thing a reviewer can answer. */
+ reviewerQuestion:{question:string;detail:string;reason:string}|null;
 }
 
 const terminalStates=new Set(['rejected','disqualified','relationship_handoff','icp_mismatch','service_mismatch','watch']);
@@ -106,6 +108,8 @@ export function selectedRunSummary(status:any){
     .map(e=>({url:e.finalUrl,title:e.title,retrievedAt:e.retrievedAt})),
    readiness:p?packetReadiness(p):null,
    blockedReason:failed?job.error??'blocked':null,
+   reviewerQuestion:p?.pendingResolution?.nextAction==='ask_reviewer'&&p.pendingResolution.question
+    ?{question:p.pendingResolution.question,detail:p.pendingResolution.detail,reason:p.pendingResolution.reason}:null,
   };
  });
  const counts={

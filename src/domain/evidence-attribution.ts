@@ -30,10 +30,32 @@ function issuerNames(company:Company,known:Evidence[]){
  }
  return names;
 }
+/** A company that has moved domains.
+ *
+ *  Accepting an alias requires BOTH signals, because either alone is forgeable or coincidental:
+ *   - the company's OWN domain redirected here (recorded requested host vs final host), and
+ *   - the destination's own structured identity names the same company.
+ *
+ *  A redirect can point anywhere, and any page can mention a company name. Neither a hard-coded
+ *  domain pair nor a name match alone is accepted. */
+export function redirectAliasEvidence(e:Evidence,company:Company){
+ if(!company.domain||e.origin!=='original')return null;
+ let requested:string,final:string;
+ try{requested=hostOf(e.url);final=hostOf(e.finalUrl);}catch{return null;}
+ if(!ownedHost(requested,company.domain)||ownedHost(final,company.domain))return null;
+ const named=(e.companyFacts??[]).some(f=>['name','alternateName'].includes(f.field)
+  &&validStructuredFact(e,f)&&companyNameKey(String(f.value))===companyNameKey(company.name));
+ if(!named)return null;
+ return {from:company.domain,to:final,basis:'first_party_redirect_with_structured_identity' as const,
+  evidenceId:e.id,requestedUrl:e.url,finalUrl:e.finalUrl};
+}
 export function companyAttributionValid(e:Evidence,company:Company,known:Evidence[]=[]){
  if(!company.domain||e.origin!=='original')return false;
  const publisher=hostOf(e.finalUrl),a=e.attribution;
  if(ownedHost(publisher,company.domain)&&!firstPartyATS(publisher))return e.accountHost===publisher||e.accountHost===company.domain;
+ // The company's own domain redirected here and this page carries its structured identity, so this
+ // is the same company at its current address rather than an unrelated third-party host.
+ if(redirectAliasEvidence(e,company))return e.accountHost===publisher||e.accountHost===company.domain;
  // Legacy ATS packets retain their previously validated employer attribution and IDs.
  if(!a&&firstPartyATS(publisher)&&e.accountHost===company.domain&&e.source==='job_posting_web')return true;
  return Boolean(a?.issuerHost&&ownedHost(a.issuerHost,company.domain)&&a.issuerName&&issuerNames(company,known).some(name=>companyNameKey(name)===companyNameKey(a.issuerName!))&&['structured_issuer','explicit_issuer_link','structured_employer'].includes(a.basis)&&issuerBasisValid(e));
