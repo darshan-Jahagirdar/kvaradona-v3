@@ -1,4 +1,6 @@
--- Recovery for supabase/migrations/20260921114500_selected_recovery_routing.sql.
+-- Recovery for supabase/migrations/20260921113615_selected_recovery_routing.sql, which Supabase's
+-- native migration tool recorded as version 20260921113615_selected_recovery_routing. The source
+-- filename was aligned to that recorded version; the reviewed SQL bytes are unchanged.
 --
 -- The migration changed only function bodies, so this recovery is proportional: it restores the
 -- previous routing behaviour and removes the added action, and touches no row, column or index.
