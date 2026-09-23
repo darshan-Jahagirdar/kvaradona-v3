@@ -32,6 +32,22 @@ function CopyButton({ label, text }: { label: string; text: string }) {
   </button>;
 }
 
+/**
+ * Informational only. Opening the dialog is the whole behaviour: no request, no job, no simulated
+ * progress. The server-side route lockdown still refuses any workflow request sent by hand.
+ */
+function RunWorkflow() {
+  const dialog = useRef<HTMLDialogElement | null>(null), opener = useRef<HTMLButtonElement | null>(null);
+  return <div className="cr-run">
+    <button ref={opener} type="button" className="primary cr-run-button" aria-haspopup="dialog" onClick={() => dialog.current?.showModal()}>Run workflow</button>
+    <dialog ref={dialog} className="cr-dialog" aria-labelledby="cr-run-title" aria-describedby="cr-run-body" onClose={() => opener.current?.focus()}>
+      <h2 id="cr-run-title">Explorium credits exhausted</h2>
+      <p id="cr-run-body">No run was started.</p>
+      <form method="dialog"><button className="primary" autoFocus>Close</button></form>
+    </dialog>
+  </div>;
+}
+
 const sectionIds: Record<string, string> = {
   'Overview': 'overview', 'Pain points': 'pain-points', 'Facts': 'facts', 'Inferences': 'inferences',
   'Recommended offer': 'offer', 'Contact': 'contact', 'Draft for review': 'draft', 'Sources & open questions': 'sources',
@@ -69,7 +85,7 @@ function Detail({ company, content, headingRef }: { company: DisplayCompany; con
   };
   return <section className="card cr-detail" aria-labelledby="cr-detail-title">
     <div className="card-heading"><div><p className="eyebrow">{c.domain}</p><h2 id="cr-detail-title" tabIndex={-1} ref={headingRef}>{c.name}</h2>
-      <p className="muted">{observed} observed · {c.painPoints.length - observed} to validate</p></div>
+      <p className="muted">{observed} {content.labels.observed.toLowerCase()} · {c.painPoints.length - observed} {content.labels.potential.toLowerCase()}</p></div>
       <span className="badge">{content.labels.sending}</span></div>
     {content.sectionOrder.filter(name => name in sections).map(name => <div key={name} className="cr-section" id={`${c.id}-${sectionIds[name] ?? name}`}>
       <h3>{name === 'Draft for review' ? content.labels.draft : name}</h3>{sections[name]}</div>)}
@@ -95,7 +111,7 @@ export function CompanyResearch({ content }: { content: DisplayContent }) {
   return <>
     <header><p className="eyebrow">REVIEWED COMPANY RESEARCH</p>
       <div className="title-row"><div><h1>{content.title}</h1><p className="muted">{content.subtitle}</p></div>
-        <span className="badge">{content.labels.sending}</span></div>
+        <div className="cr-actions"><RunWorkflow /><span className="badge">{content.labels.sending}</span></div></div>
       <p className="cr-meta">Research reviewed {content.reviewedOn} · content version {content.contentVersion}</p>
     </header>
     <section className="cr-intent" aria-label="Intent context">
@@ -115,7 +131,7 @@ export function CompanyResearch({ content }: { content: DisplayContent }) {
           <span className="cr-card-head"><strong>{c.name}</strong>{active ? <span className="cr-selected">Selected</span> : null}</span>
           <span className="cr-meta">{c.domain}</span>
           <span className="cr-card-summary">{c.summary}</span>
-          <span className="cr-meta">{c.painPoints.length} pain points · {observed} observed · {c.contactStatus}</span>
+          <span className="cr-meta">{c.painPoints.length} pain points · {observed} {content.labels.observed.toLowerCase()} · {c.contactStatus}</span>
         </button>;
       })}
     </nav>

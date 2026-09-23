@@ -22,6 +22,9 @@ export const sourceBasisLabels = {
   saved_capture_and_browser_review: 'Saved capture and browser review',
   provider_record: 'Contact-data provider record',
   indexed_official_page: 'Official page via web index',
+  public_job_posting: 'Public job posting',
+  public_interview: 'Published executive interview',
+  published_case_study: 'Published supplier case study',
 } as const;
 const SourceBasis = z.enum(Object.keys(sourceBasisLabels) as [keyof typeof sourceBasisLabels, ...(keyof typeof sourceBasisLabels)[]]);
 
@@ -65,7 +68,8 @@ export const CompanyPreviewContent = z.object({
     overviewLabels: z.array(Text).length(3),
     sectionOrder: z.array(Text).min(1).max(12),
   }).strict(),
-  companies: z.array(Company).length(4),
+  /** The four primary accounts plus at most four reviewed additions. */
+  companies: z.array(Company).min(4).max(8),
   /** Private provenance and accounting. Validated for shape only; never projected to the browser. */
   internal: z.record(z.string(), z.unknown()),
 }).strict();

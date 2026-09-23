@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { contentProblems, CompanyPreviewContent, parseCompanyPreview, toDisplay } from '../src/company-preview/content';
 import { authorizeCompanyPreview, type PreviewAuthClient } from '../src/company-preview/access';
 import { previewLockdown, previewPermitted } from '../src/company-preview/mode';
-import { INTERNAL_MARKER, syntheticPreview } from './fixtures/company-preview';
+import { readFileSync } from 'node:fs';
+import { INTERNAL_MARKER, syntheticAddition, syntheticPreview } from './fixtures/company-preview';
 
 vi.mock('server-only', () => ({}));
 
@@ -44,6 +45,29 @@ describe('company preview content', () => {
     expect(parseCompanyPreview(JSON.stringify(extra))).toEqual({ ok: false, reason: 'invalid' });
     const three = syntheticPreview(); three.companies.pop();
     expect(parseCompanyPreview(JSON.stringify(three))).toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('labels public job postings, executive interviews and supplier case studies, and rejects unknown source kinds', () => {
+    const parsed = parseCompanyPreview(payload());
+    if (!parsed.ok) throw new Error('fixture invalid');
+    const labels = new Set(toDisplay(parsed.content).companies.flatMap(c => c.sources.map(s => s.basisLabel)));
+    for (const label of ['Public job posting', 'Published executive interview', 'Published supplier case study']) expect(labels).toContain(label);
+    const unknown = syntheticPreview() as unknown as { companies: { sources: { basis: string }[] }[] };
+    unknown.companies[0].sources[0].basis = 'social_media_post';
+    expect(parseCompanyPreview(JSON.stringify(unknown))).toEqual({ ok: false, reason: 'invalid' });
+  });
+
+  it('accepts four to eight accounts and derives every count from the content', () => {
+    const six = syntheticPreview();
+    six.companies.push(syntheticAddition('epsilon', 'eps.person@epsilon.example.org'), syntheticAddition('zeta', null));
+    const parsed = parseCompanyPreview(JSON.stringify(six));
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok) expect(toDisplay(parsed.content).counts).toEqual({ companies: 6, workEmails: 4, drafts: 6, draftsWithoutRecipient: 2 });
+    const nine = syntheticPreview();
+    for (const id of ['e1', 'e2', 'e3', 'e4', 'e5']) nine.companies.push(syntheticAddition(id, null));
+    expect(parseCompanyPreview(JSON.stringify(nine)).ok).toBe(false);
+    const duplicate = syntheticPreview(); duplicate.companies.push(syntheticAddition('alpha', null));
+    expect(parseCompanyPreview(JSON.stringify(duplicate)).ok).toBe(false);
   });
 
   it('requires exactly three pain points, each marked observed or to validate', () => {
@@ -155,6 +179,13 @@ describe('preview lockdown of the existing workflow', () => {
   const saved = { ...process.env };
   beforeEach(() => { vi.resetModules(); });
   afterEach(() => { process.env = { ...saved }; vi.doUnmock('../src/persistence/server'); vi.doUnmock('next/navigation'); });
+
+  it('keeps the preview Run workflow control informational: the client view has no request path', () => {
+    // The browser check covers the dialog itself; this guards against a request being wired in later.
+    const source = readFileSync(new URL('../components/company-research.tsx', import.meta.url), 'utf8');
+    expect(source).toContain('Run workflow');
+    for (const forbidden of ['fetch(', 'XMLHttpRequest', 'sendBeacon', '/api/', 'use server', "from '../app", 'action=']) expect(source).not.toContain(forbidden);
+  });
 
   it('is inactive when the preview is not configured', () => {
     expect(previewLockdown({})).toBeNull();

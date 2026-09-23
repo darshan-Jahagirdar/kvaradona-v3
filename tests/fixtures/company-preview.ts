@@ -1,14 +1,15 @@
 /** Synthetic company-preview payload. Every organization, person and address here is invented. */
-type Basis = 'direct_http' | 'provider_record' | 'indexed_official_page';
+type Basis = 'direct_http' | 'provider_record' | 'public_job_posting';
 
 function company(id: string, name: string, email: string | null, status: 'unresolved' | 'officially_published' | 'provider_verified', observed: boolean) {
-  const domain = `${id}.example.org`, basis: Basis = status === 'provider_verified' ? 'provider_record' : 'direct_http';
+  const domain = `${id}.example.org`, basis: Basis = status === 'provider_verified' ? 'provider_record' : status === 'unresolved' ? 'public_job_posting' : 'direct_http';
   return {
     id, name, domain, summary: `${name} is a synthetic test organization.`,
     services: ['Website analytics'], researchStatus: 'Test research', contactStatus: email ? 'Work email available' : 'Work email unresolved',
     facts: [
       { id: `${id}-f1`, text: `${name} publishes a test page.`, sourceIds: [`${id}-s1`] },
       { id: `${id}-f2`, text: `${name} lists a test role.`, sourceIds: [`${id}-s2`] },
+      { id: `${id}-f3`, text: 'Test supplier delivery evidence.', sourceIds: [`${id}-s3`, `${id}-s4`] },
     ],
     inferences: [{ id: `${id}-i1`, text: 'A test inference drawn from the first fact.', factIds: [`${id}-f1`] }],
     painPoints: [
@@ -27,9 +28,16 @@ function company(id: string, name: string, email: string | null, status: 'unreso
     limitations: ['Test limitation.'],
     sources: [
       { id: `${id}-s1`, title: 'Test page', url: `https://${domain}/page`, checkedOn: '2026-01-02', basis: 'direct_http' as const, note: 'Test note.' },
+      { id: `${id}-s3`, title: 'Test supplier case study', url: 'https://supplier.example.org/case', checkedOn: '2026-01-02', basis: 'published_case_study' as const, note: 'Test note.' },
+      { id: `${id}-s4`, title: 'Test interview', url: `https://news.example.org/${id}`, checkedOn: '2026-01-02', basis: 'public_interview' as const, note: 'Test note.' },
       { id: `${id}-s2`, title: 'Test directory', url: status === 'provider_verified' ? null : `https://${domain}/people`, checkedOn: '2026-01-02', basis, note: 'Test note.' },
     ],
   };
+}
+
+/** A reviewed addition beyond the primary four, for the bounded 4–8 range. */
+export function syntheticAddition(id: string, email: string | null) {
+  return company(id, `${id} Test Addition`, email, email ? 'provider_verified' : 'unresolved', true);
 }
 
 export const INTERNAL_MARKER = 'synthetic-internal-marker-7f3a';
