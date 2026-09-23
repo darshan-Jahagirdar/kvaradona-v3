@@ -1,3 +1,4 @@
+import {previewLockdown} from '../../../src/company-preview/mode';
 import {intentSetup,intentIcp} from '../../../src/domain/intent-icp';
 import {NextResponse,type NextRequest} from 'next/server';
 import {z} from 'zod';
@@ -6,7 +7,7 @@ import {Packet} from '../../../src/contracts/pipeline';
 import {companyIdentity} from '../../../src/domain/opportunity-review';
 import {sameRequestOrigin} from '../../../src/domain/request-origin';
 const Command=z.object({organizationId:z.string().uuid(),requestKey:z.string().uuid()});
-export async function POST(req:NextRequest){
+export async function POST(req:NextRequest){const locked=previewLockdown();if(locked)return locked;
  if(!sameRequestOrigin(req.headers.get('origin'),req.headers.get('host'),req.nextUrl.protocol))return NextResponse.json({error:'Invalid request origin'},{status:403});
  let input;try{const raw=await req.text();if(raw.length>1000)throw Error();input=Command.parse(JSON.parse(raw));}catch{return NextResponse.json({error:'A valid workflow request is required.'},{status:400});}
  const c=await userClient(),{data:{user}}=await c.auth.getUser();if(!user)return NextResponse.json({error:'Sign in required'},{status:401});
@@ -14,7 +15,7 @@ export async function POST(req:NextRequest){
  if(error){const messages:Record<string,string>={apollo_intent_access_unverified:intentSetup.reason,budget_paused:'Budget paused. Existing spending and unresolved reservations count toward the authorized cumulative cap.',live_disabled:'Live execution is paused. No work was launched.',provider_unverified:'A required provider is unavailable. No work was launched.',membership_required:'Organization access is required.',free_quota_unverified_or_exhausted:'The authorized provider trial allowance is exhausted or unavailable.',intent_search_exhausted:'This intent search has no remaining page. Review the current results before changing its scope.',explorium_trial_verification_expired:'Explorium trial verification has expired. Verify remaining free access before continuing.',explorium_credit_accounting_hold:'Explorium credit accounting needs review before another run.'};return NextResponse.json({error:messages[error.message]??'Workflow could not be queued. Try again using the same request.'},{status:409});}
  return NextResponse.json({runId:data.id,created:data.created},{headers:{'Cache-Control':'no-store'}});
 }
-export async function GET(){
+export async function GET(){const locked=previewLockdown();if(locked)return locked;
  const c=await userClient(),{data:{user}}=await c.auth.getUser();if(!user)return NextResponse.json({error:'Sign in required'},{status:401});
  const [runs,worker,budget]=await Promise.all([c.from('workflow_runs').select('id,campaign_id,created_at').order('created_at',{ascending:false}).limit(1),c.rpc('workflow_worker_status'),c.rpc('operational_status')]);
  if(runs.error||worker.error||budget.error)return NextResponse.json({error:'Workflow status unavailable'},{status:503});

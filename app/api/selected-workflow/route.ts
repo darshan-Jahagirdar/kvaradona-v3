@@ -1,3 +1,4 @@
+import {previewLockdown} from '../../../src/company-preview/mode';
 import {NextResponse,type NextRequest} from 'next/server';
 import {z} from 'zod';
 import {userClient} from '../../../src/persistence/server';
@@ -24,7 +25,7 @@ const launchMessages:Record<string,string>={
  no_selectable_companies:'None of the selected companies could start: they are excluded, already running, or held by an unresolved operation.',
 };
 
-export async function POST(req:NextRequest){
+export async function POST(req:NextRequest){const locked=previewLockdown();if(locked)return locked;
  if(!sameRequestOrigin(req.headers.get('origin'),req.headers.get('host'),req.nextUrl.protocol))
   return NextResponse.json({error:'Invalid request origin'},{status:403});
  let input;
@@ -41,7 +42,7 @@ export async function POST(req:NextRequest){
  return NextResponse.json({runId:data.id,created:data.created,queued:data.queued,skipped:data.skipped??[],campaigns:data.campaigns??[]},{headers:{'Cache-Control':'no-store'}});
 }
 
-export async function GET(req:NextRequest){
+export async function GET(req:NextRequest){const locked=previewLockdown();if(locked)return locked;
  const c=await userClient(),{data:{user}}=await c.auth.getUser();
  if(!user)return NextResponse.json({error:'Sign in required'},{status:401});
  const organizationId=req.nextUrl.searchParams.get('organizationId');

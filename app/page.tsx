@@ -11,8 +11,11 @@ import {websiteReviewProblems} from '../src/domain/website-specialist';
 import {crmReviewProblems} from '../src/domain/crm-specialist';
 import {reviewPlacement,groupOpportunities,type ReviewSection,type ReviewItem} from '../src/domain/opportunity-review';
 import {writingReviewCurrent} from '../src/domain/draft-quality';
+import {previewRequested} from '../src/company-preview/mode';
 export const dynamic='force-dynamic';
 export default async function Inbox({searchParams}:{searchParams:Promise<{section?:string;filter?:string}>}){
+ // A company-research preview deployment never shows or queries the workflow inbox.
+ if(previewRequested())redirect('/companies');
  const params=await searchParams,section:ReviewSection=params.section==='human'?'human':params.section==='sources'?'sources':'opportunities',filter=params.filter==='rejected'?'rejected':'assessment';
  const client=await userClient();const {data:{user}}=await client.auth.getUser();if(!user)redirect('/login');
  const [opps,status,membership,observations,quality,companyObservations]=await Promise.all([

@@ -1,7 +1,8 @@
+import {previewLockdown} from '../../../src/company-preview/mode';
 import {z} from 'zod';
 import {userClient} from '../../../src/persistence/server';
 import {Packet} from '../../../src/contracts/pipeline';
-export async function GET(request:Request){
+export async function GET(request:Request){const locked=previewLockdown();if(locked)return locked;
  const params=new URL(request.url).searchParams,parsed=z.object({id:z.string().uuid(),viewport:z.enum(['mobile','desktop'])}).safeParse({id:params.get('opportunity'),viewport:params.get('viewport')});
  if(!parsed.success)return Response.json({error:'Invalid artifact request'},{status:400});
  const client=await userClient(),{data:{user}}=await client.auth.getUser();if(!user)return Response.json({error:'Sign in required'},{status:401});

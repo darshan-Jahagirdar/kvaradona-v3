@@ -1,3 +1,4 @@
+import {previewLockdown} from '../../../src/company-preview/mode';
 import { NextResponse,type NextRequest } from 'next/server';
 import { z } from 'zod';
 import { userClient } from '../../../src/persistence/server';
@@ -10,7 +11,7 @@ const IdentityAnswer=z.object({name:z.string().trim().min(1).max(200),
  domain:z.string().trim().toLowerCase().max(253).regex(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/)});
 const Command=z.object({id:z.string().uuid(),revision:z.number().int().positive(),requestKey:z.string().uuid(),action:z.enum(['edit','recheck','defer','reject','research','resume','refresh_contact_search','identify_company']),note:z.string().trim().min(1).max(3000),draft:StoredDraft.nullable(),input:IdentityAnswer.optional()})
  .refine(c=>c.action!=='identify_company'||c.input,{message:'identity_answer_required'});
-export async function POST(req:NextRequest){
+export async function POST(req:NextRequest){const locked=previewLockdown();if(locked)return locked;
  if(!sameRequestOrigin(req.headers.get('origin'),req.headers.get('host'),req.nextUrl.protocol))return NextResponse.json({error:'Invalid request origin'},{status:403});
  if(Number(req.headers.get('content-length')??0)>32000)return NextResponse.json({error:'Request too large'},{status:413});
  let input;try{const raw=await req.text();if(raw.length>32000)throw new Error();input=Command.parse(JSON.parse(raw));}catch{return NextResponse.json({error:'A valid review note and current version are required.'},{status:400});}
